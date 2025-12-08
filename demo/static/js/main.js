@@ -1,0 +1,487 @@
+// 全局变量
+let currentFaceStream = null;
+let currentBehaviorStream = null;
+let uploadedFaceVideoPath = null;
+let uploadedBehaviorVideoPath = null;
+
+// 页面加载完成后初始化
+document.addEventListener('DOMContentLoaded', function() {
+    // 标签页切换
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const tab = this.getAttribute('data-tab');
+            switchTab(tab);
+        });
+    });
+
+    // 视频源切换
+    document.querySelectorAll('input[name="face-source"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            if (this.value === 'video') {
+                document.getElementById('face-video-upload').style.display = 'block';
+                document.getElementById('face-rtsp-input').style.display = 'none';
+            } else {
+                document.getElementById('face-video-upload').style.display = 'none';
+                document.getElementById('face-rtsp-input').style.display = 'block';
+            }
+        });
+    });
+    
+    // 页面加载时自动加载已上传的视频列表
+    loadFaceVideoList();
+
+    document.querySelectorAll('input[name="behavior-source"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            if (this.value === 'video') {
+                document.getElementById('behavior-video-upload').style.display = 'block';
+                document.getElementById('behavior-rtsp-input').style.display = 'none';
+            } else {
+                document.getElementById('behavior-video-upload').style.display = 'none';
+                document.getElementById('behavior-rtsp-input').style.display = 'block';
+            }
+        });
+    });
+
+    // 图片预览
+    document.getElementById('register-image').addEventListener('change', function(e) {
+        previewImage(e.target.files[0], 'register-preview');
+    });
+
+    document.getElementById('checkin-image').addEventListener('change', function(e) {
+        previewImage(e.target.files[0], 'checkin-preview');
+    });
+
+    // 加载已注册人脸列表
+    loadFaceList();
+});
+
+// 切换标签页
+function switchTab(tabName) {
+    // 隐藏所有标签内容
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+
+    // 移除所有按钮的active类
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+
+    // 显示选中的标签内容
+    document.getElementById(tabName).classList.add('active');
+
+    // 激活对应的按钮
+    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+    
+    // 如果切换到人脸检测标签页，加载视频列表
+    if (tabName === 'face-detection') {
+        loadFaceVideoList();
+    }
+}
+
+// 图片预览
+function previewImage(file, previewId) {
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const preview = document.getElementById(previewId);
+            preview.src = e.target.result;
+            preview.style.display = 'block';
+        };
+        reader.readAsDataURL(file);
+    }
+}
+
+// 注册人脸
+async function registerFace() {
+    const name = document.getElementById('register-name').value.trim();
+    const imageInput = document.getElementById('register-image');
+
+    if (!name) {
+        alert('请输入姓名');
+        return;
+    }
+
+    if (!imageInput.files || imageInput.files.length === 0) {
+        alert('请选择图片');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('image', imageInput.files[0]);
+
+    try {
+        const response = await fetch('/api/face/register', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(`成功注册: ${result.name}`);
+            document.getElementById('register-name').value = '';
+            document.getElementById('register-image').value = '';
+            document.getElementById('register-preview').style.display = 'none';
+            loadFaceList();
+        } else {
+            alert(`注册失败: ${result.message}`);
+        }
+    } catch (error) {
+        alert(`注册失败: ${error.message}`);
+    }
+}
+
+// 人脸打卡
+async function checkinFace() {
+    const imageInput = document.getElementById('checkin-image');
+    const resultBox = document.getElementById('checkin-result');
+
+    if (!imageInput.files || imageInput.files.length === 0) {
+        alert('请选择图片');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('image', imageInput.files[0]);
+
+    try {
+        const response = await fetch('/api/face/checkin', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            resultBox.className = 'result-box success';
+            resultBox.innerHTML = `
+                <strong>打卡成功!</strong><br>
+                姓名: ${result.name}<br>
+                相似度: ${(result.similarity * 100).toFixed(2)}%<br>
+                时间: ${result.time}
+            `;
+        } else {
+            resultBox.className = 'result-box error';
+            resultBox.innerHTML = `<strong>打卡失败:</strong> ${result.message}`;
+        }
+    } catch (error) {
+        resultBox.className = 'result-box error';
+        resultBox.innerHTML = `<strong>打卡失败:</strong> ${error.message}`;
+    }
+}
+
+// 加载人脸列表
+async function loadFaceList() {
+    const faceList = document.getElementById('face-list');
+
+    try {
+        const response = await fetch('/api/face/list');
+        const result = await response.json();
+
+        if (result.success) {
+            if (result.faces.length === 0) {
+                faceList.innerHTML = '<p>暂无已注册人员</p>';
+            } else {
+                faceList.innerHTML = result.faces.map(name => 
+                    `<div class="face-item">${name}</div>`
+                ).join('');
+            }
+        } else {
+            faceList.innerHTML = '<p>加载失败</p>';
+        }
+    } catch (error) {
+        faceList.innerHTML = '<p>加载失败</p>';
+    }
+}
+
+// 上传人脸检测视频
+async function uploadFaceVideo() {
+    const fileInput = document.getElementById('face-video-file');
+    const statusBox = document.getElementById('face-video-status');
+
+    if (!fileInput.files || fileInput.files.length === 0) {
+        alert('请选择视频文件');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('video', fileInput.files[0]);
+
+    statusBox.className = 'status-box';
+    statusBox.innerHTML = '正在上传...';
+    statusBox.style.display = 'block';
+
+    try {
+        const response = await fetch('/api/upload/video', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            uploadedFaceVideoPath = result.path;
+            statusBox.className = 'status-box success';
+            statusBox.innerHTML = `上传成功: ${result.filename}`;
+            // 上传成功后刷新视频列表
+            loadFaceVideoList();
+        } else {
+            statusBox.className = 'status-box error';
+            statusBox.innerHTML = `上传失败: ${result.message}`;
+        }
+    } catch (error) {
+        statusBox.className = 'status-box error';
+        statusBox.innerHTML = `上传失败: ${error.message}`;
+    }
+}
+
+// 加载已上传的视频列表
+async function loadFaceVideoList() {
+    const videoListContainer = document.getElementById('face-video-list');
+    
+    videoListContainer.innerHTML = '<p style="color: #999; text-align: center; margin: 20px 0;">正在加载...</p>';
+    
+    try {
+        const response = await fetch('/api/upload/video/list');
+        const result = await response.json();
+        
+        if (result.success) {
+            if (result.videos.length === 0) {
+                videoListContainer.innerHTML = '<p style="color: #999; text-align: center; margin: 20px 0;">暂无已上传的视频</p>';
+                return;
+            }
+            
+            let html = '<div class="video-list-items">';
+            result.videos.forEach(video => {
+                const isSelected = uploadedFaceVideoPath === video.path ? 'selected' : '';
+                html += `
+                    <div class="video-item ${isSelected}" data-path="${video.path}" onclick="selectFaceVideo('${video.path}', '${video.filename}')" style="
+                        padding: 10px;
+                        margin: 5px 0;
+                        border: 1px solid #ddd;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        transition: all 0.3s;
+                        background: ${isSelected ? '#e3f2fd' : '#fff'};
+                    " onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='${isSelected ? '#e3f2fd' : '#fff'}'">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong style="color: #333;">${video.filename}</strong>
+                                <div style="font-size: 12px; color: #666; margin-top: 5px;">
+                                    大小: ${video.size_mb} MB | 修改时间: ${video.modified_time}
+                                </div>
+                            </div>
+                            ${isSelected ? '<span style="color: #2196F3; font-weight: bold;">✓ 已选择</span>' : ''}
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            videoListContainer.innerHTML = html;
+        } else {
+            videoListContainer.innerHTML = `<p style="color: #f44336; text-align: center; margin: 20px 0;">加载失败: ${result.message}</p>`;
+        }
+    } catch (error) {
+        videoListContainer.innerHTML = `<p style="color: #f44336; text-align: center; margin: 20px 0;">加载失败: ${error.message}</p>`;
+    }
+}
+
+// 选择已上传的视频
+function selectFaceVideo(path, filename) {
+    uploadedFaceVideoPath = path;
+    
+    // 更新UI显示
+    document.querySelectorAll('.video-item').forEach(item => {
+        item.classList.remove('selected');
+        item.style.background = '#fff';
+        const selectedSpan = item.querySelector('span');
+        if (selectedSpan) {
+            selectedSpan.remove();
+        }
+    });
+    
+    const selectedItem = document.querySelector(`.video-item[data-path="${path}"]`);
+    if (selectedItem) {
+        selectedItem.classList.add('selected');
+        selectedItem.style.background = '#e3f2fd';
+        const nameDiv = selectedItem.querySelector('div > div');
+        if (nameDiv && !nameDiv.querySelector('span')) {
+            const span = document.createElement('span');
+            span.style.cssText = 'color: #2196F3; font-weight: bold; margin-left: 10px;';
+            span.textContent = '✓ 已选择';
+            nameDiv.appendChild(span);
+        }
+    }
+    
+    // 更新状态提示
+    const statusBox = document.getElementById('face-video-status');
+    statusBox.className = 'status-box success';
+    statusBox.innerHTML = `已选择视频: ${filename}`;
+    statusBox.style.display = 'block';
+}
+
+// 上传行为检测视频
+async function uploadBehaviorVideo() {
+    const fileInput = document.getElementById('behavior-video-file');
+    const statusBox = document.getElementById('behavior-video-status');
+
+    if (!fileInput.files || fileInput.files.length === 0) {
+        alert('请选择视频文件');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('video', fileInput.files[0]);
+
+    statusBox.className = 'status-box';
+    statusBox.innerHTML = '正在上传...';
+    statusBox.style.display = 'block';
+
+    try {
+        const response = await fetch('/api/upload/video', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            uploadedBehaviorVideoPath = result.path;
+            statusBox.className = 'status-box success';
+            statusBox.innerHTML = `上传成功: ${result.filename}`;
+        } else {
+            statusBox.className = 'status-box error';
+            statusBox.innerHTML = `上传失败: ${result.message}`;
+        }
+    } catch (error) {
+        statusBox.className = 'status-box error';
+        statusBox.innerHTML = `上传失败: ${error.message}`;
+    }
+}
+
+// 开始人脸检测
+async function startFaceDetection() {
+    const sourceType = document.querySelector('input[name="face-source"]:checked').value;
+    const videoStream = document.getElementById('face-video-stream');
+    const placeholder = document.getElementById('face-video-placeholder');
+
+    let sourcePath = '';
+
+    if (sourceType === 'video') {
+        if (!uploadedFaceVideoPath) {
+            alert('请先上传视频文件或从列表中选择已上传的视频');
+            return;
+        }
+        sourcePath = uploadedFaceVideoPath;
+    } else {
+        const rtspUrl = document.getElementById('face-rtsp-url').value.trim();
+        if (!rtspUrl) {
+            alert('请输入RTSP流地址');
+            return;
+        }
+        sourcePath = rtspUrl;
+    }
+
+    try {
+        const response = await fetch('/api/stream/face/start', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                type: sourceType,
+                path: sourcePath
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            // 显示视频流
+            placeholder.style.display = 'none';
+            videoStream.style.display = 'block';
+            videoStream.src = result.url + '&t=' + new Date().getTime();
+            currentFaceStream = result.stream_id;
+        } else {
+            alert(`启动失败: ${result.message}`);
+        }
+    } catch (error) {
+        alert(`启动失败: ${error.message}`);
+    }
+}
+
+// 停止人脸检测
+function stopFaceDetection() {
+    const videoStream = document.getElementById('face-video-stream');
+    const placeholder = document.getElementById('face-video-placeholder');
+
+    videoStream.src = '';
+    videoStream.style.display = 'none';
+    placeholder.style.display = 'flex';
+    currentFaceStream = null;
+}
+
+// 开始行为检测
+async function startBehaviorDetection() {
+    const sourceType = document.querySelector('input[name="behavior-source"]:checked').value;
+    const videoStream = document.getElementById('behavior-video-stream');
+    const placeholder = document.getElementById('behavior-video-placeholder');
+
+    let sourcePath = '';
+
+    if (sourceType === 'video') {
+        if (!uploadedBehaviorVideoPath) {
+            alert('请先上传视频文件');
+            return;
+        }
+        sourcePath = uploadedBehaviorVideoPath;
+    } else {
+        const rtspUrl = document.getElementById('behavior-rtsp-url').value.trim();
+        if (!rtspUrl) {
+            alert('请输入RTSP流地址');
+            return;
+        }
+        sourcePath = rtspUrl;
+    }
+
+    try {
+        const response = await fetch('/api/stream/behavior/start', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                type: sourceType,
+                path: sourcePath
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            // 显示视频流
+            placeholder.style.display = 'none';
+            videoStream.style.display = 'block';
+            videoStream.src = result.url + '&t=' + new Date().getTime();
+            currentBehaviorStream = result.stream_id;
+        } else {
+            alert(`启动失败: ${result.message}`);
+        }
+    } catch (error) {
+        alert(`启动失败: ${error.message}`);
+    }
+}
+
+// 停止行为检测
+function stopBehaviorDetection() {
+    const videoStream = document.getElementById('behavior-video-stream');
+    const placeholder = document.getElementById('behavior-video-placeholder');
+
+    videoStream.src = '';
+    videoStream.style.display = 'none';
+    placeholder.style.display = 'flex';
+    currentBehaviorStream = null;
+}
+

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智慧课堂系统</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>智慧课堂系统</h1>
+            <nav>
+                <button class="nav-btn active" data-tab="checkin">人脸打卡</button>
+                <button class="nav-btn" data-tab="face-detection">人脸检测</button>
+                <button class="nav-btn" data-tab="behavior-detection">行为检测</button>
+            </nav>
+        </header>
+
+        <main>
+            <!-- 人脸打卡界面 -->
+            <div id="checkin" class="tab-content active">
+                <div class="card">
+                    <h2>人脸识别打卡</h2>
+                    <div class="section">
+                        <h3>注册人脸</h3>
+                        <div class="form-group">
+                            <label>姓名:</label>
+                            <input type="text" id="register-name" placeholder="请输入姓名">
+                        </div>
+                        <div class="form-group">
+                            <label>上传照片:</label>
+                            <input type="file" id="register-image" accept="image/*" capture="user">
+                            <div class="preview-container">
+                                <img id="register-preview" src="" alt="预览" style="display: none;">
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" onclick="registerFace()">注册</button>
+                    </div>
+
+                    <div class="divider"></div>
+
+                    <div class="section">
+                        <h3>人脸打卡</h3>
+                        <div class="form-group">
+                            <label>拍摄或上传照片:</label>
+                            <input type="file" id="checkin-image" accept="image/*" capture="user">
+                            <div class="preview-container">
+                                <img id="checkin-preview" src="" alt="预览" style="display: none;">
+                            </div>
+                        </div>
+                        <button class="btn btn-success" onclick="checkinFace()">打卡</button>
+                        <div id="checkin-result" class="result-box"></div>
+                    </div>
+
+                    <div class="divider"></div>
+
+                    <div class="section">
+                        <h3>已注册人员列表</h3>
+                        <button class="btn btn-info" onclick="loadFaceList()">刷新列表</button>
+                        <div id="face-list" class="face-list"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 人脸检测界面 -->
+            <div id="face-detection" class="tab-content">
+                <div class="card">
+                    <h2>课堂实时人脸检测与识别</h2>
+                    <div class="section">
+                        <h3>选择视频源</h3>
+                        <div class="form-group">
+                            <label>
+                                <input type="radio" name="face-source" value="video" checked> 上传视频
+                            </label>
+                            <label>
+                                <input type="radio" name="face-source" value="rtsp"> RTSP流
+                            </label>
+                        </div>
+
+                        <div id="face-video-upload" class="source-section">
+                            <div class="form-group">
+                                <label>上传视频文件:</label>
+                                <input type="file" id="face-video-file" accept="video/*">
+                                <button class="btn btn-primary" onclick="uploadFaceVideo()">上传视频</button>
+                            </div>
+                            <div id="face-video-status" class="status-box"></div>
+                            
+                            <div class="divider" style="margin: 20px 0;"></div>
+                            
+                            <div class="form-group">
+                                <label>已上传的视频列表:</label>
+                                <button class="btn btn-info" onclick="loadFaceVideoList()" style="margin-left: 10px;">刷新列表</button>
+                                <div id="face-video-list" class="video-list" style="margin-top: 10px; max-height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 4px;">
+                                    <p style="color: #999; text-align: center; margin: 20px 0;">点击"刷新列表"加载已上传的视频</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="face-rtsp-input" class="source-section" style="display: none;">
+                            <div class="form-group">
+                                <label>RTSP流地址:</label>
+                                <input type="text" id="face-rtsp-url" placeholder="rtsp://username:password@ip:port/stream">
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <button class="btn btn-success" onclick="startFaceDetection()">开始检测</button>
+                            <button class="btn btn-danger" onclick="stopFaceDetection()">停止检测</button>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <h3>实时画面</h3>
+                        <div class="video-container">
+                            <img id="face-video-stream" src="" alt="视频流" style="display: none;">
+                            <div id="face-video-placeholder" class="video-placeholder">
+                                <p>等待开始检测...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 行为检测界面 -->
+            <div id="behavior-detection" class="tab-content">
+                <div class="card">
+                    <h2>课堂学生行为检测</h2>
+                    <div class="section">
+                        <h3>选择视频源</h3>
+                        <div class="form-group">
+                            <label>
+                                <input type="radio" name="behavior-source" value="video" checked> 上传视频
+                            </label>
+                            <label>
+                                <input type="radio" name="behavior-source" value="rtsp"> RTSP流
+                            </label>
+                        </div>
+
+                        <div id="behavior-video-upload" class="source-section">
+                            <div class="form-group">
+                                <label>上传视频文件:</label>
+                                <input type="file" id="behavior-video-file" accept="video/*">
+                                <button class="btn btn-primary" onclick="uploadBehaviorVideo()">上传视频</button>
+                            </div>
+                            <div id="behavior-video-status" class="status-box"></div>
+                        </div>
+
+                        <div id="behavior-rtsp-input" class="source-section" style="display: none;">
+                            <div class="form-group">
+                                <label>RTSP流地址:</label>
+                                <input type="text" id="behavior-rtsp-url" placeholder="rtsp://username:password@ip:port/stream">
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <button class="btn btn-success" onclick="startBehaviorDetection()">开始检测</button>
+                            <button class="btn btn-danger" onclick="stopBehaviorDetection()">停止检测</button>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <h3>实时画面</h3>
+                        <div class="video-container">
+                            <img id="behavior-video-stream" src="" alt="视频流" style="display: none;">
+                            <div id="behavior-video-placeholder" class="video-placeholder">
+                                <p>等待开始检测...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
+
