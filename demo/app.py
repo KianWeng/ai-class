@@ -8,25 +8,6 @@
 # # 设置库路径（解决 dlib CUDNN 问题）
 # # 必须在导入任何可能使用 dlib 的模块之前设置
 import os
-conda_env_lib = '/data/miniconda3/envs/yolo_v11/lib'
-if os.path.exists(conda_env_lib):
-    current_ld_path = os.environ.get('LD_LIBRARY_PATH', '')
-    if conda_env_lib not in current_ld_path:
-        os.environ['LD_LIBRARY_PATH'] = f'{conda_env_lib}:{current_ld_path}'
-        # 注意：在 Python 中修改 LD_LIBRARY_PATH 对已加载的库无效
-        # 需要使用 ctypes 重新加载动态链接器
-        try:
-            import ctypes
-            if hasattr(ctypes, 'CDLL'):
-                # 尝试预加载 CUDNN 库
-                cudnn_lib = os.path.join(conda_env_lib, 'libcudnn.so.9')
-                if os.path.exists(cudnn_lib):
-                    try:
-                        ctypes.CDLL(cudnn_lib, mode=ctypes.RTLD_GLOBAL)
-                    except:
-                        pass
-        except:
-            pass
 import cv2
 import numpy as np
 import base64
@@ -40,32 +21,32 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from ultralytics import YOLO
 
-# # 在导入 face_recognition (dlib) 之前预加载 CUDNN 库
-# # 解决 dlib 编译时链接 CUDNN 但运行时找不到符号的问题
-# try:
-#     import ctypes
-    
-#     conda_env_lib = '/data/miniconda3/envs/yolo_v11/lib'
-#     if os.path.exists(conda_env_lib):
-#         # 预加载主要的 CUDNN 库
-#         cudnn_lib = os.path.join(conda_env_lib, 'libcudnn.so.9')
-#         if os.path.exists(cudnn_lib):
-#             try:
-#                 ctypes.CDLL(cudnn_lib, mode=ctypes.RTLD_GLOBAL)
-#             except:
-#                 pass  # 忽略加载错误
-# except:
-#     pass  # 如果预加载失败，继续执行
-
 try:
-    import face_recognition
+    from facenet_pytorch import InceptionResnetV1
+    from facenet_pytorch import fixed_image_standardization
+    import torch
+    from PIL import Image, ImageDraw, ImageFont
     FACE_RECOGNITION_AVAILABLE = True
-except ImportError:
-    print("警告: face_recognition库未安装，人脸识别功能将受限")
+    # 初始化 FaceNet 模型用于特征提取
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    resnet = InceptionResnetV1(pretrained='vggface2').eval()
+    resnet = resnet.to(device)
+    print(f"FaceNet 模型已加载，使用设备: {device}")
+    if device == 'cuda':
+        print(f"GPU 设备名称: {torch.cuda.get_device_name(0)}")
+        print(f"GPU 内存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+except ImportError as e:
+    print(f"警告: facenet-pytorch库未安装，人脸识别功能将受限: {e}")
     FACE_RECOGNITION_AVAILABLE = False
+    resnet = None
+    fixed_image_standardization = None
 except Exception as e:
-    print(f"警告: face_recognition库导入失败: {e}")
+    print(f"警告: facenet-pytorch库导入失败: {e}")
+    import traceback
+    traceback.print_exc()
     FACE_RECOGNITION_AVAILABLE = False
+    resnet = None
+    fixed_image_standardization = None
 from pathlib import Path
 import pickle
 
@@ -105,7 +86,7 @@ def init_models():
         print(f"警告: 人脸检测模型不存在: {MODEL_FACE_PATH}")
         face_model = YOLO('yolo11n.pt')  # 使用默认模型
     
-    # 加载行为检测模型
+    # 加载行为检测模型（如果需要）
     if os.path.exists(MODEL_BEHAVIOR_PATH):
         print(f"加载行为检测模型: {MODEL_BEHAVIOR_PATH}")
         behavior_model = YOLO(MODEL_BEHAVIOR_PATH)
@@ -138,6 +119,97 @@ def save_face_database():
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+# 全局变量：缓存字体，避免重复加载
+_chinese_font_cache = None
+
+def get_chinese_font(font_size=30):
+    """获取中文字体，如果找不到则返回默认字体"""
+    global _chinese_font_cache
+    
+    # 如果已经缓存了字体，直接返回
+    if _chinese_font_cache is not None:
+        try:
+            return ImageFont.truetype(_chinese_font_cache, font_size)
+        except:
+            pass
+    
+    # 尝试加载中文字体
+    font_paths = [
+        # Linux 中文字体（按优先级排序）
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/truetype/arphic/uming.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        # Windows 中文字体
+        "C:/Windows/Fonts/simhei.ttf",
+        "C:/Windows/Fonts/simsun.ttc",
+        "C:/Windows/Fonts/msyh.ttc",
+        # macOS 中文字体
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+    ]
+    
+    for font_path in font_paths:
+        try:
+            if os.path.exists(font_path):
+                font = ImageFont.truetype(font_path, font_size)
+                _chinese_font_cache = font_path  # 缓存字体路径
+                return font
+        except:
+            continue
+    
+    # 如果所有字体都加载失败，使用默认字体
+    if not hasattr(get_chinese_font, '_warned'):
+        print("=" * 60)
+        print("警告: 未找到中文字体，中文可能显示为方块或乱码")
+        print("建议安装中文字体，运行以下命令：")
+        print("  Ubuntu/Debian: sudo apt-get install fonts-wqy-microhei")
+        print("  CentOS/RHEL: sudo yum install wqy-microhei-fonts")
+        print("=" * 60)
+        get_chinese_font._warned = True
+    
+    return ImageFont.load_default()
+
+def draw_chinese_text(img, text, position, font_size=20, color=(0, 255, 0)):
+    """
+    在图像上绘制中文文字
+    :param img: OpenCV 图像 (BGR格式)
+    :param text: 要绘制的文字
+    :param position: 文字位置 (x, y)
+    :param font_size: 字体大小
+    :param color: 文字颜色 (BGR格式)
+    :return: 绘制后的图像
+    """
+    # 转换为 PIL Image (RGB格式)
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(img_rgb)
+    draw = ImageDraw.Draw(pil_img)
+    
+    # 获取字体
+    font = get_chinese_font(font_size)
+    
+    # 转换颜色格式 (BGR -> RGB)
+    rgb_color = (color[2], color[1], color[0])
+    
+    # 绘制文字
+    draw.text(position, text, font=font, fill=rgb_color)
+    
+    # 转换回 OpenCV 格式 (RGB -> BGR)
+    img_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+    return img_bgr
+    
+    # 转换颜色格式 (BGR -> RGB)
+    rgb_color = (color[2], color[1], color[0])
+    
+    # 绘制文字
+    draw.text(position, text, font=font, fill=rgb_color)
+    
+    # 转换回 OpenCV 格式 (RGB -> BGR)
+    img_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+    return img_bgr
+
 def detect_faces_yolo(image):
     """使用YOLO检测人脸"""
     if face_model is None:
@@ -158,40 +230,118 @@ def detect_faces_yolo(image):
     
     return faces
 
-def recognize_face(face_image):
-    """识别人脸"""
-    if not FACE_RECOGNITION_AVAILABLE:
+def align_face(img, box, target_size=(160, 160)):
+    """
+    裁剪并标准化人脸图像（FaceNet 要求 160×160，且像素标准化）
+    :param img: 原始 BGR 图像
+    :param box: 人脸边界框 [x1,y1,x2,y2]
+    :param target_size: FaceNet 输入尺寸
+    :return: 对齐后的张量（可直接输入 FaceNet）
+    """
+    # 裁剪人脸区域（防止越界）
+    h, w = img.shape[:2]
+    x1, y1, x2, y2 = box
+    x1 = max(0, x1)
+    y1 = max(0, y1)
+    x2 = min(w, x2)
+    y2 = min(h, y2)
+    face_img = img[y1:y2, x1:x2]
+    
+    # 转换为 RGB（OpenCV 是 BGR，FaceNet 要求 RGB）
+    face_img_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+    
+    # 缩放至目标尺寸
+    face_img_resized = cv2.resize(face_img_rgb, target_size)
+    
+    # 转换为张量并标准化（FaceNet 要求的标准化方式）
+    face_tensor = torch.tensor(face_img_resized).permute(2, 0, 1).float()  # [H,W,C] → [C,H,W]
+    face_tensor = fixed_image_standardization(face_tensor)  # 标准化（关键，否则特征不准）
+    
+    return face_tensor
+
+def extract_features_batch(face_tensors):
+    """批量提取人脸特征向量"""
+    if not FACE_RECOGNITION_AVAILABLE or resnet is None:
+        return []
+    
+    if len(face_tensors) == 0:
+        return []
+    
+    try:
+        # 将所有张量堆叠成批次
+        valid_tensors = []
+        valid_indices = []
+        
+        for i, face_tensor in enumerate(face_tensors):
+            if face_tensor is not None:
+                # 确保是 3D (channels, height, width)
+                if face_tensor.dim() == 3:
+                    valid_tensors.append(face_tensor)
+                    valid_indices.append(i)
+        
+        if len(valid_tensors) == 0:
+            return []
+        
+        # 堆叠成批次 (batch, channels, height, width)
+        batch_tensor = torch.stack(valid_tensors)
+        
+        # 批量提取特征
+        with torch.no_grad():
+            device = next(resnet.parameters()).device
+            face_encodings = resnet(batch_tensor.to(device))
+            # 归一化特征向量
+            face_encodings = torch.nn.functional.normalize(face_encodings, p=2, dim=1)
+            face_encodings = face_encodings.cpu().numpy()
+        
+        # 创建完整的结果列表（包含 None）
+        results = [None] * len(face_tensors)
+        for idx, encoding in zip(valid_indices, face_encodings):
+            results[idx] = encoding
+        
+        return results
+    except Exception as e:
+        print(f"批量特征提取错误: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+def recognize_face_from_encoding(face_encoding):
+    """从特征向量识别人脸"""
+    if face_encoding is None:
         return None, 0.0
     
     try:
-        # 转换颜色空间
-        rgb_image = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
-        
-        # 获取人脸编码
-        encodings = face_recognition.face_encodings(rgb_image)
-        
-        if len(encodings) == 0:
-            return None, 0.0
-        
-        face_encoding = encodings[0]
-        
-        # 与数据库中的所有人脸比较
+        # 与数据库中的所有人脸比较（使用余弦相似度）
         best_match = None
-        best_distance = 1.0
+        best_similarity = -1.0
+        all_similarities = []  # 记录所有相似度，用于调试
         
         for name, known_encoding in face_encodings_db.items():
-            distance = face_recognition.face_distance([known_encoding], face_encoding)[0]
-            if distance < best_distance:
-                best_distance = distance
+            # 计算余弦相似度
+            similarity = np.dot(face_encoding, known_encoding) / (
+                np.linalg.norm(face_encoding) * np.linalg.norm(known_encoding)
+            )
+            all_similarities.append((name, similarity))
+            if similarity > best_similarity:
+                best_similarity = similarity
                 best_match = name
         
-        # 如果距离小于0.6，认为是同一个人
-        if best_distance < 0.6:
-            return best_match, 1.0 - best_distance
+        # 打印前3个最相似的结果（用于调试）
+        if len(all_similarities) > 0:
+            all_similarities.sort(key=lambda x: x[1], reverse=True)
+            top3 = all_similarities[:3]
+            top3_str = ", ".join([f"{name}:{sim:.3f}" for name, sim in top3])
+            print(f"  [相似度排名] 前3名: {top3_str}")
         
-        return None, 0.0
+        # 如果相似度大于0.6，认为是同一个人
+        if best_similarity > 0.6:
+            return best_match, best_similarity
+        
+        return None, best_similarity  # 返回最高相似度，即使未达到阈值
     except Exception as e:
         print(f"人脸识别错误: {e}")
+        import traceback
+        traceback.print_exc()
         return None, 0.0
 
 def detect_behaviors(image):
@@ -221,28 +371,14 @@ def detect_behaviors(image):
     
     return behaviors
 
-def _recognize_single_face(face_roi, face_index, face_bbox, confidence):
-    """并行识别人脸的辅助函数"""
-    recognition_start_time = time.time()
-    name, similarity = recognize_face(face_roi)
-    recognition_time = time.time() - recognition_start_time
-    
-    return {
-        'index': face_index,
-        'bbox': face_bbox,
-        'confidence': confidence,
-        'name': name,
-        'similarity': similarity,
-        'recognition_time': recognition_time
-    }
 
 def process_frame_face_detection(frame):
-    """处理帧进行人脸检测和识别（并行识别）"""
-    # 检测人脸 - 记录检测时间
+    """处理帧进行人脸检测和识别（YOLO检测 -> 裁剪对齐 -> 批量FaceNet识别）"""
+    # 步骤1: 使用YOLO检测人脸
     detection_start_time = time.time()
     faces = detect_faces_yolo(frame)
     detection_time = time.time() - detection_start_time
-    print(f"[人脸检测] 检测时间: {detection_time*1000:.2f} ms, 检测到 {len(faces)} 个人脸")
+    print(f"[人脸检测] YOLO检测时间: {detection_time*1000:.2f} ms, 检测到 {len(faces)} 个人脸")
     
     # 绘制结果
     annotated_frame = frame.copy()
@@ -251,40 +387,54 @@ def process_frame_face_detection(frame):
     if len(faces) == 0:
         return annotated_frame, results_data
     
-    # 并行识别人脸 - 记录总识别时间
-    recognition_start_time = time.time()
+    # 步骤2: 对齐所有人脸（裁剪和缩放）
+    alignment_start_time = time.time()
+    face_tensors = []
     
-    # 准备人脸区域数据
-    face_tasks = []
     for i, face in enumerate(faces):
-        x1, y1, x2, y2 = face['bbox']
-        face_roi = frame[y1:y2, x1:x2]
-        face_tasks.append((face_roi, i, face['bbox'], face['confidence']))
+        try:
+            # 使用 align_face 函数对齐人脸
+            face_tensor = align_face(frame, face['bbox'])
+            face_tensors.append(face_tensor)
+        except Exception as e:
+            print(f"[警告] 人脸 {i+1} 对齐失败: {e}")
+            face_tensors.append(None)
     
-    # 使用线程池并行识别（最多使用4个线程，避免过多线程导致性能下降）
-    max_workers = min(4, len(faces))
+    alignment_time = time.time() - alignment_start_time
+    print(f"[人脸对齐] 对齐时间: {alignment_time*1000:.2f} ms")
+    
+    # 步骤3: 批量提取特征
+    feature_extraction_start_time = time.time()
+    face_encodings = extract_features_batch(face_tensors)
+    feature_extraction_time = time.time() - feature_extraction_start_time
+    print(f"[特征提取] 批量提取时间: {feature_extraction_time*1000:.2f} ms")
+    
+    # 步骤4: 与数据库比较（批量识别）
+    recognition_start_time = time.time()
     recognition_results = []
     
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # 提交所有识别任务
-        future_to_face = {
-            executor.submit(_recognize_single_face, face_roi, idx, bbox, conf): idx 
-            for face_roi, idx, bbox, conf in face_tasks
-        }
+    for i, (face, encoding) in enumerate(zip(faces, face_encodings)):
+        if encoding is not None:
+            name, similarity = recognize_face_from_encoding(encoding)
+        else:
+            name, similarity = None, 0.0
         
-        # 收集结果
-        for future in as_completed(future_to_face):
-            try:
-                result = future.result()
-                recognition_results.append(result)
-                print(f"[人脸识别] 人脸 {result['index']+1} 识别时间: {result['recognition_time']*1000:.2f} ms, 结果: {result['name'] if result['name'] else '未知'}")
-            except Exception as e:
-                print(f"[人脸识别] 识别错误: {e}")
+        # 打印识别结果
+        if name:
+            print(f"[识别结果] 人脸 {i+1}: 识别为 {name}, 相似度: {similarity:.4f}, 检测置信度: {face['confidence']:.4f}")
+        else:
+            print(f"[识别结果] 人脸 {i+1}: 未识别, 最高相似度: {similarity:.4f}, 检测置信度: {face['confidence']:.4f}")
+        
+        recognition_results.append({
+            'index': i,
+            'bbox': face['bbox'],
+            'confidence': face['confidence'],
+            'name': name,
+            'similarity': similarity
+        })
     
-    # 按原始索引排序，保持顺序
-    recognition_results.sort(key=lambda x: x['index'])
-    
-    total_recognition_time = time.time() - recognition_start_time
+    recognition_time = time.time() - recognition_start_time
+    print(f"[人脸识别] 识别时间: {recognition_time*1000:.2f} ms, 识别成功: {sum(1 for r in recognition_results if r['name'])}/{len(recognition_results)}")
     
     # 绘制结果
     for result in recognition_results:
@@ -297,10 +447,14 @@ def process_frame_face_detection(frame):
         color = (0, 255, 0) if name else (0, 0, 255)
         cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
         
-        # 绘制标签
-        label = f"{name if name else '未知'}: {similarity:.2f}" if name else f"未知: {confidence:.2f}"
-        cv2.putText(annotated_frame, label, (x1, y1 - 10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        # 绘制标签（使用支持中文的函数）
+        if name:
+            label = f"{name}: {similarity:.2f}"
+        else:
+            label = f"未知: {confidence:.2f}"
+        
+        # 使用支持中文的绘制函数
+        annotated_frame = draw_chinese_text(annotated_frame, label, (x1, y1 - 25), font_size=20, color=color)
         
         results_data.append({
             'bbox': result['bbox'],
@@ -309,14 +463,15 @@ def process_frame_face_detection(frame):
             'similarity': similarity
         })
     
-    # 打印总时间统计
-    if len(recognition_results) > 0:
-        avg_single_recognition_time = sum(r['recognition_time'] for r in recognition_results) / len(recognition_results)
-        print(f"[统计] 并行识别总时间: {total_recognition_time*1000:.2f} ms, 平均单次识别时间: {avg_single_recognition_time*1000:.2f} ms/人脸")
-        print(f"[性能] 并行加速比: {sum(r['recognition_time'] for r in recognition_results) / total_recognition_time:.2f}x")
-    
-    total_time = detection_time + total_recognition_time
-    print(f"[总计] 单帧总处理时间: {total_time*1000:.2f} ms (检测: {detection_time*1000:.2f} ms + 识别: {total_recognition_time*1000:.2f} ms)")
+    # 打印总时间统计和识别摘要
+    total_time = detection_time + alignment_time + feature_extraction_time + recognition_time
+    recognized_count = sum(1 for r in recognition_results if r['name'])
+    print(f"[总计] 单帧总处理时间: {total_time*1000:.2f} ms (检测: {detection_time*1000:.2f} ms + 对齐: {alignment_time*1000:.2f} ms + 特征提取: {feature_extraction_time*1000:.2f} ms + 识别: {recognition_time*1000:.2f} ms)")
+    print(f"[识别摘要] 检测到 {len(faces)} 个人脸, 成功识别 {recognized_count} 个, 未识别 {len(faces) - recognized_count} 个")
+    if recognized_count > 0:
+        recognized_names = [r['name'] for r in recognition_results if r['name']]
+        print(f"[识别摘要] 识别到的人员: {', '.join(recognized_names)}")
+    print("-" * 60)  # 分隔线
     
     return annotated_frame, results_data
 
@@ -335,10 +490,9 @@ def process_frame_behavior_detection(frame):
         # 绘制边界框
         cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
         
-        # 绘制标签
+        # 绘制标签（使用支持中文的函数）
         label = f"{class_name}: {confidence:.2f}"
-        cv2.putText(annotated_frame, label, (x1, y1 - 10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+        annotated_frame = draw_chinese_text(annotated_frame, label, (x1, y1 - 25), font_size=20, color=(255, 0, 0))
     
     return annotated_frame, behaviors
 
@@ -460,26 +614,35 @@ def register_face():
             if image is None:
                 return jsonify({'success': False, 'message': '无法读取图片'}), 400
             
-            if not FACE_RECOGNITION_AVAILABLE:
-                return jsonify({'success': False, 'message': 'face_recognition库未安装，请先安装该库'}), 400
+            if not FACE_RECOGNITION_AVAILABLE or resnet is None:
+                return jsonify({'success': False, 'message': 'facenet-pytorch库未安装，请先安装该库'}), 400
             
-            # 转换为RGB
-            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            
-            # 检测人脸
-            face_locations = face_recognition.face_locations(rgb_image)
-            
-            if len(face_locations) == 0:
+            # 使用 YOLO 检测人脸
+            faces = detect_faces_yolo(image)
+            if len(faces) == 0:
                 return jsonify({'success': False, 'message': '未检测到人脸'}), 400
             
-            # 获取人脸编码
-            face_encodings = face_recognition.face_encodings(rgb_image, face_locations)
+            # 使用第一个检测到的人脸
+            face_box = faces[0]['bbox']
             
-            if len(face_encodings) == 0:
-                return jsonify({'success': False, 'message': '无法提取人脸特征'}), 400
+            # 对齐人脸
+            face_tensor = align_face(image, face_box)
+            
+            # 确保 face_tensor 是 4D (batch, channels, height, width)
+            if face_tensor.dim() == 3:
+                face_tensor = face_tensor.unsqueeze(0)
+            
+            # 提取人脸特征向量
+            with torch.no_grad():
+                # 确保 face_tensor 在正确的设备上
+                device = next(resnet.parameters()).device
+                face_encoding = resnet(face_tensor.to(device))
+                # 归一化特征向量
+                face_encoding = torch.nn.functional.normalize(face_encoding, p=2, dim=1)
+                face_encoding = face_encoding.cpu().numpy()[0]
             
             # 保存人脸编码
-            face_encodings_db[name] = face_encodings[0]
+            face_encodings_db[name] = face_encoding
             save_face_database()
             
             # 保存图片
@@ -519,51 +682,61 @@ def checkin_face():
             if image is None:
                 return jsonify({'success': False, 'message': '无法读取图片'}), 400
             
-            if not FACE_RECOGNITION_AVAILABLE:
+            if not FACE_RECOGNITION_AVAILABLE or resnet is None:
                 return jsonify({
                     'success': False,
-                    'message': 'face_recognition库未安装，请先安装该库',
+                    'message': 'facenet-pytorch库未安装，请先安装该库',
                     'name': None
                 })
             
-            # 识别人脸
-            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            face_locations = face_recognition.face_locations(rgb_image)
-            
-            if len(face_locations) == 0:
+            # 使用 YOLO 检测人脸
+            faces = detect_faces_yolo(image)
+            if len(faces) == 0:
                 return jsonify({
                     'success': False,
                     'message': '未检测到人脸',
                     'name': None
                 })
             
-            face_encodings = face_recognition.face_encodings(rgb_image, face_locations)
+            # 使用第一个检测到的人脸
+            face_box = faces[0]['bbox']
             
-            if len(face_encodings) == 0:
-                return jsonify({
-                    'success': False,
-                    'message': '无法提取人脸特征',
-                    'name': None
-                })
+            # 对齐人脸
+            face_tensor = align_face(image, face_box)
             
-            face_encoding = face_encodings[0]
+            # 确保 face_tensor 是 4D (batch, channels, height, width)
+            if face_tensor.dim() == 3:
+                face_tensor = face_tensor.unsqueeze(0)
             
-            # 与数据库比较
+            # 提取人脸特征向量
+            with torch.no_grad():
+                # 确保 face_tensor 在正确的设备上
+                device = next(resnet.parameters()).device
+                face_encoding = resnet(face_tensor.to(device))
+                # 归一化特征向量
+                face_encoding = torch.nn.functional.normalize(face_encoding, p=2, dim=1)
+                face_encoding = face_encoding.cpu().numpy()[0]
+            
+            # 与数据库比较（使用余弦相似度）
             best_match = None
-            best_distance = 1.0
+            best_similarity = -1.0
             
             for name, known_encoding in face_encodings_db.items():
-                distance = face_recognition.face_distance([known_encoding], face_encoding)[0]
-                if distance < best_distance:
-                    best_distance = distance
+                # 计算余弦相似度
+                similarity = np.dot(face_encoding, known_encoding) / (
+                    np.linalg.norm(face_encoding) * np.linalg.norm(known_encoding)
+                )
+                if similarity > best_similarity:
+                    best_similarity = similarity
                     best_match = name
             
-            if best_distance < 0.6:
+            # 如果相似度大于0.6，认为是同一个人
+            if best_similarity > 0.6:
                 return jsonify({
                     'success': True,
                     'message': f'打卡成功: {best_match}',
                     'name': best_match,
-                    'similarity': 1.0 - best_distance,
+                    'similarity': best_similarity,
                     'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 })
             else:
@@ -571,7 +744,7 @@ def checkin_face():
                     'success': False,
                     'message': '未识别到已注册的人脸',
                     'name': None,
-                    'similarity': 1.0 - best_distance
+                    'similarity': best_similarity
                 })
         
         return jsonify({'success': False, 'message': '不支持的文件格式'}), 400
