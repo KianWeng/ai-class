@@ -1,0 +1,34 @@
+# 训练输出
+model_training/runs/
+model_training/runs/**/*
+
+# 临时文件和输出
+*.jpg
+*.jpeg
+*.png
+*.pkl
+*.mp4
+*.avi
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
