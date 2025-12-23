@@ -1,0 +1,7 @@
+path: /home/zephyr/ai-class/model_training/data/face_detect/widerface
+train: train
+val: val
+test:
+
+names:
+  0: face
