@@ -27,15 +27,27 @@ try:
     import insightface
     from insightface.app import FaceAnalysis
     FACE_RECOGNITION_AVAILABLE = True
-    # 初始化 ArcFace 模型用于特征提取
-    # 使用buffalo_l模型（包含检测、识别、对齐功能）
+    # 初始化两个 ArcFace 模型
+    # 1. 检测模型：用于实时人脸检测（det_size=1280x1280，检测精度更高）
+    # 2. 注册模型：用于注册和特征提取（det_size=640x640，速度更快）
     try:
-        face_analysis = FaceAnalysis(name='buffalo_l', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-        face_analysis.prepare(ctx_id=0, det_size=(1280, 1280))
-        # 验证 face_analysis 是否正确初始化
-        if not hasattr(face_analysis, 'get') or face_analysis.get is None:
-            raise AttributeError("face_analysis.get 方法不可用，模型初始化失败")
-        print(f"ArcFace 模型已加载")
+        # 检测模型
+        face_analysis_detect = FaceAnalysis(name='buffalo_l', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+        face_analysis_detect.prepare(ctx_id=1, det_size=(1280, 1280))
+        if not hasattr(face_analysis_detect, 'get') or face_analysis_detect.get is None:
+            raise AttributeError("face_analysis_detect.get 方法不可用，检测模型初始化失败")
+        print(f"✓ 检测模型已加载 (det_size=1280x1280)")
+        
+        # 注册模型
+        face_analysis_register = FaceAnalysis(name='buffalo_l', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+        face_analysis_register.prepare(ctx_id=1, det_size=(640, 640))
+        if not hasattr(face_analysis_register, 'get') or face_analysis_register.get is None:
+            raise AttributeError("face_analysis_register.get 方法不可用，注册模型初始化失败")
+        print(f"✓ 注册模型已加载 (det_size=640x640)")
+        
+        # 为了兼容性，保留face_analysis指向检测模型
+        face_analysis = face_analysis_detect
+        
         if torch.cuda.is_available():
             print(f"GPU 设备名称: {torch.cuda.get_device_name(0)}")
             print(f"GPU 内存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
@@ -45,16 +57,22 @@ try:
         traceback.print_exc()
         FACE_RECOGNITION_AVAILABLE = False
         face_analysis = None
+        face_analysis_detect = None
+        face_analysis_register = None
 except ImportError as e:
     print(f"警告: insightface库未安装，人脸识别功能将受限: {e}")
     FACE_RECOGNITION_AVAILABLE = False
     face_analysis = None
+    face_analysis_detect = None
+    face_analysis_register = None
 except Exception as e:
     print(f"警告: insightface库导入失败: {e}")
     import traceback
     traceback.print_exc()
     FACE_RECOGNITION_AVAILABLE = False
     face_analysis = None
+    face_analysis_detect = None
+    face_analysis_register = None
 from pathlib import Path
 import pickle
 
@@ -84,10 +102,10 @@ video_streams = {}  # 存储视频流 {stream_id: cap}
 def init_models():
     global behavior_model
     
-    # InsightFace模型已在导入时初始化，这里不需要再加载
-    # 只需要检查是否可用
-    if FACE_RECOGNITION_AVAILABLE and face_analysis is not None:
-        print("✓ InsightFace模型已就绪（检测+识别）")
+    # InsightFace模型已在导入时初始化，这里只需要检查是否可用
+    if FACE_RECOGNITION_AVAILABLE and face_analysis_detect is not None and face_analysis_register is not None:
+        print("✓ InsightFace检测模型已就绪 (det_size=1280x1280)")
+        print("✓ InsightFace注册模型已就绪 (det_size=640x640)")
     else:
         print("⚠ InsightFace模型不可用，人脸识别功能将受限")
     
@@ -274,12 +292,12 @@ def draw_chinese_text(img, text, position, font_size=20, color=(0, 255, 0)):
 
 def detect_faces_insightface(image):
     """使用InsightFace检测人脸"""
-    if not FACE_RECOGNITION_AVAILABLE or face_analysis is None:
+    if not FACE_RECOGNITION_AVAILABLE or face_analysis_detect is None:
         return []
     
     try:
-        # 使用InsightFace检测人脸
-        faces = face_analysis.get(image)
+        # 使用检测模型检测人脸
+        faces = face_analysis_detect.get(image)
         results = []
         
         for face in faces:
@@ -322,7 +340,7 @@ def align_face_arcface(img, face_obj):
 
 def extract_features_from_faces(face_objects):
     """从InsightFace检测到的face对象直接提取特征向量"""
-    if not FACE_RECOGNITION_AVAILABLE or face_analysis is None:
+    if not FACE_RECOGNITION_AVAILABLE:
         return []
     
     if len(face_objects) == 0:
@@ -489,9 +507,9 @@ def process_frame_face_detection(frame):
     """处理帧进行人脸检测和识别（InsightFace检测 -> 直接提取特征 -> 识别）"""
     total_start_time = time.time()
     
-    # 步骤1: 使用InsightFace检测人脸
+    # 步骤1: 使用检测模型检测人脸
     detection_start_time = time.time()
-    face_objects = face_analysis.get(frame) if FACE_RECOGNITION_AVAILABLE and face_analysis is not None else []
+    face_objects = face_analysis_detect.get(frame) if FACE_RECOGNITION_AVAILABLE and face_analysis_detect is not None else []
     detection_time = time.time() - detection_start_time
     
     # 绘制结果
@@ -729,18 +747,40 @@ def register_face():
             if image is None:
                 return jsonify({'success': False, 'message': '无法读取图片'}), 400
             
-            if not FACE_RECOGNITION_AVAILABLE or face_analysis is None:
+            if not FACE_RECOGNITION_AVAILABLE or face_analysis_register is None:
                 return jsonify({'success': False, 'message': 'insightface库未安装，请先安装该库'}), 400
             
-            # 使用 InsightFace 检测人脸
+            # 检查图像尺寸
+            h, w = image.shape[:2]
+            min_size = 128  # 最小尺寸要求（像素）
+            original_size = (w, h)
+            resized = False
+            
+            # 如果图像太小，尝试放大
+            if w < min_size or h < min_size:
+                # 计算放大比例，使最小边至少达到min_size
+                scale = max(min_size / w, min_size / h) * 1.5  # 放大1.5倍以确保足够大
+                new_w = int(w * scale)
+                new_h = int(h * scale)
+                image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                resized = True
+                print(f"[人脸注册] 图像尺寸过小 ({w}x{h})，已放大至 {new_w}x{new_h}")
+            
+            # 使用注册模型检测人脸并提取特征
             detection_start_time = time.time()
-            face_objects = face_analysis.get(image)
+            face_objects = face_analysis_register.get(image)
             detection_time = time.time() - detection_start_time
             
             if len(face_objects) == 0:
                 total_time = time.time() - total_start_time
-                print(f"[人脸注册] 姓名: {name} | 未检测到人脸 | 总耗时: {total_time*1000:.2f}ms")
-                return jsonify({'success': False, 'message': '未检测到人脸'}), 400
+                size_info = f"原始尺寸: {original_size[0]}x{original_size[1]}"
+                if resized:
+                    size_info += f", 放大后: {image.shape[1]}x{image.shape[0]}"
+                print(f"[人脸注册] 姓名: {name} | 未检测到人脸 | {size_info} | 总耗时: {total_time*1000:.2f}ms")
+                return jsonify({
+                    'success': False, 
+                    'message': f'未检测到人脸。图像尺寸: {original_size[0]}x{original_size[1]}。建议使用至少128x128像素的清晰人脸照片。'
+                }), 400
             
             # 使用第一个检测到的人脸
             face_obj = face_objects[0]
@@ -838,7 +878,7 @@ def checkin_face():
                 print(f"[人脸打卡] 无法读取图片 | 总耗时: {total_time*1000:.2f}ms")
                 return jsonify({'success': False, 'message': '无法读取图片'}), 400
             
-            if not FACE_RECOGNITION_AVAILABLE or face_analysis is None:
+            if not FACE_RECOGNITION_AVAILABLE or face_analysis_register is None:
                 total_time = time.time() - total_start_time
                 print(f"[人脸打卡] insightface库未安装 | 总耗时: {total_time*1000:.2f}ms")
                 return jsonify({
@@ -847,20 +887,39 @@ def checkin_face():
                     'name': None
                 })
             
-            # 使用 InsightFace 检测人脸
+            # 检查图像尺寸
+            h, w = image.shape[:2]
+            min_size = 128  # 最小尺寸要求（像素）
+            original_size = (w, h)
+            resized = False
+            
+            # 如果图像太小，尝试放大
+            if w < min_size or h < min_size:
+                # 计算放大比例，使最小边至少达到min_size
+                scale = max(min_size / w, min_size / h) * 1.5  # 放大1.5倍以确保足够大
+                new_w = int(w * scale)
+                new_h = int(h * scale)
+                image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                resized = True
+                print(f"[人脸打卡] 图像尺寸过小 ({w}x{h})，已放大至 {new_w}x{new_h}")
+            
+            # 使用注册模型检测人脸并提取特征
             detection_start_time = time.time()
-            face_objects = face_analysis.get(image)
+            face_objects = face_analysis_register.get(image)
             detection_time = time.time() - detection_start_time
             
             if len(face_objects) == 0:
                 total_time = time.time() - total_start_time
-                print(f"[人脸打卡] 未检测到人脸 | "
+                size_info = f"原始尺寸: {original_size[0]}x{original_size[1]}"
+                if resized:
+                    size_info += f", 放大后: {image.shape[1]}x{image.shape[0]}"
+                print(f"[人脸打卡] 未检测到人脸 | {size_info} | "
                       f"图片读取耗时: {read_time*1000:.2f}ms | "
                       f"人脸检测耗时: {detection_time*1000:.2f}ms | "
                       f"总耗时: {total_time*1000:.2f}ms")
                 return jsonify({
                     'success': False,
-                    'message': '未检测到人脸',
+                    'message': f'未检测到人脸。图像尺寸: {original_size[0]}x{original_size[1]}。建议使用至少128x128像素的清晰人脸照片。',
                     'name': None
                 })
             
@@ -986,6 +1045,68 @@ def list_faces():
         'count': len(face_encodings_db)
     })
 
+@app.route('/api/face/delete', methods=['POST'])
+def delete_face():
+    """删除已注册的人脸"""
+    total_start_time = time.time()
+    try:
+        data = request.json
+        if not data or 'name' not in data:
+            return jsonify({'success': False, 'message': '缺少必要参数：name'}), 400
+        
+        name = data['name']
+        
+        # 检查人脸是否存在
+        if name not in face_encodings_db:
+            total_time = time.time() - total_start_time
+            print(f"[人脸删除] 姓名: {name} | 未找到该人脸 | 总耗时: {total_time*1000:.2f}ms")
+            return jsonify({'success': False, 'message': f'未找到名为 {name} 的已注册人脸'}), 404
+        
+        # 从数据库中删除
+        delete_start_time = time.time()
+        del face_encodings_db[name]
+        save_face_database()
+        delete_time = time.time() - delete_start_time
+        
+        # 尝试删除对应的图片文件
+        deleted_images = []
+        try:
+            if os.path.exists(FACES_FOLDER):
+                # 查找所有以该姓名开头的图片文件
+                for filename in os.listdir(FACES_FOLDER):
+                    if filename.startswith(f"{name}_") and filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+                        filepath = os.path.join(FACES_FOLDER, filename)
+                        try:
+                            os.remove(filepath)
+                            deleted_images.append(filename)
+                            print(f"[人脸删除] 已删除图片文件: {filename}")
+                        except Exception as e:
+                            print(f"[人脸删除] 删除图片文件失败 {filename}: {e}")
+        except Exception as e:
+            print(f"[人脸删除] 查找图片文件时出错: {e}")
+        
+        total_time = time.time() - total_start_time
+        
+        print(f"[人脸删除] 姓名: {name} | 删除成功 | "
+              f"删除耗时: {delete_time*1000:.2f}ms | "
+              f"总耗时: {total_time*1000:.2f}ms | "
+              f"删除的图片文件数: {len(deleted_images)}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'成功删除 {name}',
+            'name': name,
+            'deleted_images': deleted_images,
+            'deleted_images_count': len(deleted_images)
+        })
+    
+    except Exception as e:
+        total_time = time.time() - total_start_time
+        print(f"[人脸删除] 删除失败 | 错误: {str(e)} | 总耗时: {total_time*1000:.2f}ms")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 # 视频流相关API
 @app.route('/api/stream/face/start', methods=['POST'])
 def start_face_stream():
@@ -1033,14 +1154,22 @@ def face_video_stream():
 
 @app.route('/api/stream/behavior/start', methods=['POST'])
 def start_behavior_stream():
-    """启动行为检测视频流"""
+    """
+    启动行为检测视频流
+    支持两种视频源：
+    1. RTSP流：source_type='rtsp', source_path为RTSP流地址
+    2. 已上传的视频文件：source_type='video', source_path为文件路径（可通过/api/upload/video/list获取已上传文件列表）
+    """
     try:
         data = request.json
         source_type = data.get('type', 'video')
         source_path = data.get('path', '')
         
         if not source_path:
-            return jsonify({'success': False, 'message': '缺少路径参数'}), 400
+            return jsonify({
+                'success': False, 
+                'message': '缺少路径参数。对于视频文件，请使用 /api/upload/video/list 获取已上传的文件列表'
+            }), 400
         
         stream_id = f"behavior_{int(time.time())}"
         
@@ -1055,7 +1184,7 @@ def start_behavior_stream():
 
 @app.route('/api/stream/behavior/video')
 def behavior_video_stream():
-    """行为检测视频流"""
+    """行为检测视频流（支持RTSP流和已上传的视频文件）"""
     source_type = request.args.get('type', 'video')
     source_path = request.args.get('path', '')
     stream_id = request.args.get('id', '')
@@ -1064,10 +1193,25 @@ def behavior_video_stream():
         return Response(generate_frames_behavior('rtsp', source_path, stream_id),
                        mimetype='multipart/x-mixed-replace; boundary=frame')
     elif source_type == 'video':
+        # 处理视频文件路径（支持已上传的文件列表中的文件）
         if source_path.startswith('uploads/'):
             filepath = source_path
         else:
             filepath = os.path.join(UPLOAD_FOLDER, source_path)
+        
+        # 检查文件是否存在
+        if not os.path.exists(filepath):
+            return jsonify({
+                'error': f'视频文件不存在: {filepath}',
+                'message': '请确保文件已上传，或从已上传文件列表中选择'
+            }), 404
+        
+        # 检查是否为有效的视频文件
+        if not os.path.isfile(filepath):
+            return jsonify({
+                'error': f'无效的视频文件路径: {filepath}',
+                'message': '请选择有效的视频文件'
+            }), 400
         
         return Response(generate_frames_behavior('video', filepath, stream_id),
                        mimetype='multipart/x-mixed-replace; boundary=frame')
@@ -1105,7 +1249,12 @@ def upload_video():
 
 @app.route('/api/upload/video/list', methods=['GET'])
 def list_uploaded_videos():
-    """列出所有已上传的视频文件"""
+    """
+    列出所有已上传的视频文件
+    该接口返回的视频文件列表可用于：
+    1. 人脸检测视频流（/api/stream/face/start）
+    2. 行为检测视频流（/api/stream/behavior/start）
+    """
     try:
         videos = []
         upload_path = Path(UPLOAD_FOLDER)

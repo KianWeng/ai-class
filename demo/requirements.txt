@@ -1,10 +1,14 @@
 ultralytics>=8.0.0
 opencv-python>=4.5.0
 numpy>=1.21.0
-torch==2.2.0
+torch>=2.2.0
 torchvision>=0.10.0
 flask>=2.0.0
 flask-cors>=3.0.0
 facenet-pytorch>=2.5.0
+insightface>=0.7.3
+onnxruntime>=1.15.0
+# 如果需要GPU加速，请安装 onnxruntime-gpu 而不是 onnxruntime
+onnxruntime-gpu>=1.15.0
 Pillow>=9.0.0
 

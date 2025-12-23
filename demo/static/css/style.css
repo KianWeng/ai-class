@@ -244,6 +244,10 @@ main {
     border-radius: 5px;
     border: 1px solid #e2e8f0;
     color: #2d3748;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
 }
 
 .source-section {

@@ -29,6 +29,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 页面加载时自动加载已上传的视频列表
     loadFaceVideoList();
+    loadBehaviorVideoList();
 
     document.querySelectorAll('input[name="behavior-source"]').forEach(radio => {
         radio.addEventListener('change', function() {
@@ -76,6 +77,10 @@ function switchTab(tabName) {
     // 如果切换到人脸检测标签页，加载视频列表
     if (tabName === 'face-detection') {
         loadFaceVideoList();
+    }
+    // 如果切换到行为检测标签页，加载视频列表
+    if (tabName === 'behavior-detection') {
+        loadBehaviorVideoList();
     }
 }
 
@@ -185,7 +190,10 @@ async function loadFaceList() {
                 faceList.innerHTML = '<p>暂无已注册人员</p>';
             } else {
                 faceList.innerHTML = result.faces.map(name => 
-                    `<div class="face-item">${name}</div>`
+                    `<div class="face-item">
+                        <span style="flex: 1;">${name}</span>
+                        <button class="btn btn-danger" style="padding: 5px 15px; font-size: 12px; margin: 0;" onclick="deleteFace('${name}')">删除</button>
+                    </div>`
                 ).join('');
             }
         } else {
@@ -193,6 +201,38 @@ async function loadFaceList() {
         }
     } catch (error) {
         faceList.innerHTML = '<p>加载失败</p>';
+    }
+}
+
+// 删除人脸
+async function deleteFace(name) {
+    if (!confirm(`确定要删除 "${name}" 的注册信息吗？此操作不可恢复。`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/face/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ name: name })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(`成功删除: ${result.name}`);
+            if (result.deleted_images_count > 0) {
+                console.log(`已删除 ${result.deleted_images_count} 个图片文件`);
+            }
+            // 刷新列表
+            loadFaceList();
+        } else {
+            alert(`删除失败: ${result.message}`);
+        }
+    } catch (error) {
+        alert(`删除失败: ${error.message}`);
     }
 }
 
@@ -351,6 +391,8 @@ async function uploadBehaviorVideo() {
             uploadedBehaviorVideoPath = result.path;
             statusBox.className = 'status-box success';
             statusBox.innerHTML = `上传成功: ${result.filename}`;
+            // 上传成功后刷新视频列表
+            loadBehaviorVideoList();
         } else {
             statusBox.className = 'status-box error';
             statusBox.innerHTML = `上传失败: ${result.message}`;
@@ -358,6 +400,100 @@ async function uploadBehaviorVideo() {
     } catch (error) {
         statusBox.className = 'status-box error';
         statusBox.innerHTML = `上传失败: ${error.message}`;
+    }
+}
+
+// 加载已上传的行为检测视频列表
+async function loadBehaviorVideoList() {
+    const videoListContainer = document.getElementById('behavior-video-list');
+    
+    if (!videoListContainer) {
+        return; // 如果容器不存在，直接返回
+    }
+    
+    videoListContainer.innerHTML = '<p style="color: #999; text-align: center; margin: 20px 0;">正在加载...</p>';
+    
+    try {
+        const response = await fetch('/api/upload/video/list');
+        const result = await response.json();
+        
+        if (result.success) {
+            if (result.videos.length === 0) {
+                videoListContainer.innerHTML = '<p style="color: #999; text-align: center; margin: 20px 0;">暂无已上传的视频</p>';
+                return;
+            }
+            
+            let html = '<div class="video-list-items">';
+            result.videos.forEach(video => {
+                const isSelected = uploadedBehaviorVideoPath === video.path ? 'selected' : '';
+                html += `
+                    <div class="video-item ${isSelected}" data-path="${video.path}" onclick="selectBehaviorVideo('${video.path}', '${video.filename}')" style="
+                        padding: 10px;
+                        margin: 5px 0;
+                        border: 1px solid #ddd;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        transition: all 0.3s;
+                        background: ${isSelected ? '#e3f2fd' : '#fff'};
+                    " onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='${isSelected ? '#e3f2fd' : '#fff'}'">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong style="color: #333;">${video.filename}</strong>
+                                <div style="font-size: 12px; color: #666; margin-top: 5px;">
+                                    大小: ${video.size_mb} MB | 修改时间: ${video.modified_time}
+                                </div>
+                            </div>
+                            ${isSelected ? '<span style="color: #2196F3; font-weight: bold;">✓ 已选择</span>' : ''}
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            videoListContainer.innerHTML = html;
+        } else {
+            videoListContainer.innerHTML = `<p style="color: #f44336; text-align: center; margin: 20px 0;">加载失败: ${result.message}</p>`;
+        }
+    } catch (error) {
+        videoListContainer.innerHTML = `<p style="color: #f44336; text-align: center; margin: 20px 0;">加载失败: ${error.message}</p>`;
+    }
+}
+
+// 选择已上传的行为检测视频
+function selectBehaviorVideo(path, filename) {
+    uploadedBehaviorVideoPath = path;
+    
+    // 更新UI显示（只更新行为检测部分的视频项）
+    const behaviorVideoList = document.getElementById('behavior-video-list');
+    if (behaviorVideoList) {
+        behaviorVideoList.querySelectorAll('.video-item').forEach(item => {
+            item.classList.remove('selected');
+            item.style.background = '#fff';
+            const selectedSpan = item.querySelector('span');
+            if (selectedSpan) {
+                selectedSpan.remove();
+            }
+        });
+        
+        const selectedItem = behaviorVideoList.querySelector(`.video-item[data-path="${path}"]`);
+        if (selectedItem) {
+            selectedItem.classList.add('selected');
+            selectedItem.style.background = '#e3f2fd';
+            const nameDiv = selectedItem.querySelector('div > div');
+            if (nameDiv && !nameDiv.querySelector('span')) {
+                const span = document.createElement('span');
+                span.style.cssText = 'color: #2196F3; font-weight: bold; margin-left: 10px;';
+                span.textContent = '✓ 已选择';
+                nameDiv.appendChild(span);
+            }
+        }
+    }
+    
+    // 更新状态提示
+    const statusBox = document.getElementById('behavior-video-status');
+    if (statusBox) {
+        statusBox.className = 'status-box success';
+        statusBox.innerHTML = `已选择视频: ${filename}`;
+        statusBox.style.display = 'block';
     }
 }
 
@@ -433,7 +569,7 @@ async function startBehaviorDetection() {
 
     if (sourceType === 'video') {
         if (!uploadedBehaviorVideoPath) {
-            alert('请先上传视频文件');
+            alert('请先上传视频文件或从列表中选择已上传的视频');
             return;
         }
         sourcePath = uploadedBehaviorVideoPath;

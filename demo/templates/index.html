@@ -144,6 +144,16 @@
                                 <button class="btn btn-primary" onclick="uploadBehaviorVideo()">上传视频</button>
                             </div>
                             <div id="behavior-video-status" class="status-box"></div>
+                            
+                            <div class="divider" style="margin: 20px 0;"></div>
+                            
+                            <div class="form-group">
+                                <label>已上传的视频列表:</label>
+                                <button class="btn btn-info" onclick="loadBehaviorVideoList()" style="margin-left: 10px;">刷新列表</button>
+                                <div id="behavior-video-list" class="video-list" style="margin-top: 10px; max-height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 4px;">
+                                    <p style="color: #999; text-align: center; margin: 20px 0;">点击"刷新列表"加载已上传的视频</p>
+                                </div>
+                            </div>
                         </div>
 
                         <div id="behavior-rtsp-input" class="source-section" style="display: none;">
