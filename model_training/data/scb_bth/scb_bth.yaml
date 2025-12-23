@@ -1,0 +1,6 @@
+names:
+- 'BowHead'
+- 'TurnHead'
+nc: 2
+train: /home/zephyr/ai-class/model_training/data/scb_bth/images/train
+val: /home/zephyr/ai-class/model_training/data/scb_bth/images/val

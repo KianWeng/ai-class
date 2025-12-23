@@ -1,0 +1,8 @@
+train: /home/zephyr/ai-class/model_training/data/scb_hrw/images/train
+val: /home/zephyr/ai-class/model_training/data/scb_hrw/images/val
+
+# number of classes
+nc: 3
+
+# class names
+names: ['hand-raising','read','write']
