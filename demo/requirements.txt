@@ -1,14 +1,23 @@
 ultralytics>=8.0.0
 opencv-python>=4.5.0
-numpy>=1.21.0
-torch>=2.2.0
-torchvision>=0.10.0
+# NumPy 2.x 与许多库不兼容，使用 1.x 版本
+numpy>=1.21.0,<2.0.0
+torch==2.5.0
+torchvision==0.20.0
 flask>=2.0.0
 flask-cors>=3.0.0
 facenet-pytorch>=2.5.0
 insightface>=0.7.3
-onnxruntime>=1.15.0
-# 如果需要GPU加速，请安装 onnxruntime-gpu 而不是 onnxruntime
+# 注意: onnxruntime 和 onnxruntime-gpu 不能同时安装
+# 如果支持CUDA，请安装 onnxruntime-gpu；否则安装 onnxruntime
+# 安装GPU版本: pip install onnxruntime-gpu
+# 安装CPU版本: pip install onnxruntime
 onnxruntime-gpu>=1.15.0
 Pillow>=9.0.0
+# 其他依赖
+numba>=0.56.0
+pytz>=2020.1
+oauthlib>=3.0.0
+grpcio>=1.48.2
+huggingface-hub>=0.16.0
 
