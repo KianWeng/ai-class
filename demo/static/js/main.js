@@ -602,6 +602,11 @@ async function startBehaviorDetection() {
             videoStream.style.display = 'block';
             videoStream.src = result.url + '&t=' + new Date().getTime();
             currentBehaviorStream = result.stream_id;
+            
+            // 开始自动刷新统计
+            startBehaviorStatisticsAutoRefresh();
+            // 立即刷新一次
+            setTimeout(() => refreshBehaviorStatistics(), 2000);
         } else {
             alert(`启动失败: ${result.message}`);
         }
@@ -618,6 +623,128 @@ function stopBehaviorDetection() {
     videoStream.src = '';
     videoStream.style.display = 'none';
     placeholder.style.display = 'flex';
+    
+    // 停止自动刷新统计
+    stopBehaviorStatisticsAutoRefresh();
+    
     currentBehaviorStream = null;
+}
+
+// 刷新行为统计
+async function refreshBehaviorStatistics() {
+    if (!currentBehaviorStream) {
+        alert('请先开始检测');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/behavior/statistics?stream_id=${currentBehaviorStream}`);
+        const result = await response.json();
+
+        if (result.success) {
+            displayBehaviorStatistics(result.statistics, result.total);
+        } else {
+            alert(`获取统计失败: ${result.message}`);
+        }
+    } catch (error) {
+        alert(`获取统计失败: ${error.message}`);
+    }
+}
+
+// 重置行为统计
+async function resetBehaviorStatistics() {
+    if (!currentBehaviorStream) {
+        alert('请先开始检测');
+        return;
+    }
+
+    if (!confirm('确定要重置统计吗？')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/behavior/statistics/reset', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                stream_id: currentBehaviorStream
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert('统计已重置');
+            refreshBehaviorStatistics();
+        } else {
+            alert(`重置失败: ${result.message}`);
+        }
+    } catch (error) {
+        alert(`重置失败: ${error.message}`);
+    }
+}
+
+// 显示行为统计
+function displayBehaviorStatistics(statistics, total) {
+    const container = document.getElementById('behavior-statistics');
+    
+    if (total === 0) {
+        container.innerHTML = '<p style="color: #999; text-align: center; margin: 20px 0;">暂无检测数据</p>';
+        return;
+    }
+
+    // 行为名称映射（中文显示）
+    const behaviorNames = {
+        'BowHead': '低头',
+        'TurnHead': '转头',
+        'RaiseHand': '举手',
+        'Reading': '阅读',
+        'Writing': '写字'
+    };
+
+    let html = '<div class="statistics-table">';
+    html += `<div class="statistics-header"><strong>总计: ${total} 次</strong></div>`;
+    html += '<table style="width: 100%; border-collapse: collapse; margin-top: 10px;">';
+    html += '<thead><tr><th style="padding: 8px; border: 1px solid #ddd; background: #f5f5f5;">行为类型</th><th style="padding: 8px; border: 1px solid #ddd; background: #f5f5f5;">检测次数</th><th style="padding: 8px; border: 1px solid #ddd; background: #f5f5f5;">占比</th></tr></thead>';
+    html += '<tbody>';
+
+    // 按次数排序
+    const sortedStats = Object.entries(statistics).sort((a, b) => b[1] - a[1]);
+
+    for (const [behavior, count] of sortedStats) {
+        const percentage = ((count / total) * 100).toFixed(1);
+        const displayName = behaviorNames[behavior] || behavior;
+        html += `<tr>`;
+        html += `<td style="padding: 8px; border: 1px solid #ddd;">${displayName}</td>`;
+        html += `<td style="padding: 8px; border: 1px solid #ddd; text-align: center;">${count}</td>`;
+        html += `<td style="padding: 8px; border: 1px solid #ddd; text-align: center;">${percentage}%</td>`;
+        html += `</tr>`;
+    }
+
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+}
+
+// 自动刷新统计（每5秒）
+let behaviorStatisticsInterval = null;
+
+function startBehaviorStatisticsAutoRefresh() {
+    if (behaviorStatisticsInterval) {
+        clearInterval(behaviorStatisticsInterval);
+    }
+    behaviorStatisticsInterval = setInterval(() => {
+        if (currentBehaviorStream) {
+            refreshBehaviorStatistics();
+        }
+    }, 5000);
+}
+
+function stopBehaviorStatisticsAutoRefresh() {
+    if (behaviorStatisticsInterval) {
+        clearInterval(behaviorStatisticsInterval);
+        behaviorStatisticsInterval = null;
+    }
 }
 

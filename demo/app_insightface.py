@@ -83,7 +83,8 @@ CORS(app)
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv', 'jpg', 'jpeg', 'png'}
 FACES_FOLDER = 'faces_database'
-MODEL_BEHAVIOR_PATH = 'weights/scb/best.pt'  # 行为检测模型（如果存在）
+MODEL_BEHAVIOR_PATH = 'weights/scb/bth_best.pt'  # 行为检测模型（如果存在）- 低头、转头
+MODEL_BEHAVIOR_HRW_PATH = 'weights/scb/hrw_best.pt'  # 行为检测模型（如果存在）- 举手、阅读、写字
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB
@@ -93,14 +94,16 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(FACES_FOLDER, exist_ok=True)
 
 # 全局变量
-behavior_model = None
+behavior_model = None  # 低头、转头模型
+behavior_model_hrw = None  # 举手、阅读、写字模型
 face_encodings_db = {}  # 存储人脸编码 {name: encoding}
 rtsp_streams = {}  # 存储RTSP流 {stream_id: cap}
 video_streams = {}  # 存储视频流 {stream_id: cap}
+behavior_statistics = {}  # 存储行为统计 {stream_id: {class_name: count}}
 
 # 初始化模型
 def init_models():
-    global behavior_model
+    global behavior_model, behavior_model_hrw
     
     # InsightFace模型已在导入时初始化，这里只需要检查是否可用
     if FACE_RECOGNITION_AVAILABLE and face_analysis_detect is not None and face_analysis_register is not None:
@@ -109,13 +112,21 @@ def init_models():
     else:
         print("⚠ InsightFace模型不可用，人脸识别功能将受限")
     
-    # 加载行为检测模型（如果需要）
+    # 加载行为检测模型1：低头、转头
     if os.path.exists(MODEL_BEHAVIOR_PATH):
-        print(f"加载行为检测模型: {MODEL_BEHAVIOR_PATH}")
+        print(f"加载行为检测模型1: {MODEL_BEHAVIOR_PATH} (低头、转头)")
         behavior_model = YOLO(MODEL_BEHAVIOR_PATH)
     else:
-        print(f"警告: 行为检测模型不存在: {MODEL_BEHAVIOR_PATH}，将使用默认模型")
+        print(f"警告: 行为检测模型1不存在: {MODEL_BEHAVIOR_PATH}")
         behavior_model = None
+    
+    # 加载行为检测模型2：举手、阅读、写字
+    if os.path.exists(MODEL_BEHAVIOR_HRW_PATH):
+        print(f"加载行为检测模型2: {MODEL_BEHAVIOR_HRW_PATH} (举手、阅读、写字)")
+        behavior_model_hrw = YOLO(MODEL_BEHAVIOR_HRW_PATH)
+    else:
+        print(f"警告: 行为检测模型2不存在: {MODEL_BEHAVIOR_HRW_PATH}")
+        behavior_model_hrw = None
     
     # 加载已注册的人脸
     load_face_database()
@@ -466,39 +477,77 @@ def recognize_face_from_encoding(face_encoding):
     except Exception:
         return None, 0.0
 
-def detect_behaviors(image):
-    """检测学生行为"""
-    if behavior_model is None:
-        return []
-    
-    detection_start_time = time.time()
-    results = behavior_model.predict(image, conf=0.25, verbose=False)
-    detection_time = time.time() - detection_start_time
-    
+def detect_behaviors(image, stream_id=None):
+    """检测学生行为（支持两个模型）"""
     behaviors = []
     
-    if len(results) > 0 and results[0].boxes is not None:
-        boxes = results[0].boxes
-        for box in boxes:
-            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-            confidence = float(box.conf[0].cpu().numpy())
-            cls = int(box.cls[0].cpu().numpy())
-            
-            # 根据类别名称
-            class_names = ['BowHead', 'TurnHead'] if behavior_model.names else ['行为1', '行为2']
-            class_name = class_names[cls] if cls < len(class_names) else f'行为{cls}'
-            
-            behaviors.append({
-                'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                'confidence': confidence,
-                'class': class_name
-            })
+    # 模型1：低头、转头
+    if behavior_model is not None:
+        detection_start_time = time.time()
+        results = behavior_model.predict(image, conf=0.25, verbose=False)
+        detection_time = time.time() - detection_start_time
+        
+        if len(results) > 0 and results[0].boxes is not None:
+            boxes = results[0].boxes
+            for box in boxes:
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                confidence = float(box.conf[0].cpu().numpy())
+                cls = int(box.cls[0].cpu().numpy())
+                
+                # 根据类别名称
+                if hasattr(behavior_model, 'names') and behavior_model.names:
+                    class_names = behavior_model.names
+                else:
+                    class_names = ['BowHead', 'TurnHead']
+                
+                class_name = class_names[cls] if cls < len(class_names) else f'行为{cls}'
+                
+                behaviors.append({
+                    'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                    'confidence': confidence,
+                    'class': class_name
+                })
+    
+    # 模型2：举手、阅读、写字
+    if behavior_model_hrw is not None:
+        detection_start_time = time.time()
+        results = behavior_model_hrw.predict(image, conf=0.25, verbose=False)
+        detection_time = time.time() - detection_start_time
+        
+        if len(results) > 0 and results[0].boxes is not None:
+            boxes = results[0].boxes
+            for box in boxes:
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                confidence = float(box.conf[0].cpu().numpy())
+                cls = int(box.cls[0].cpu().numpy())
+                
+                # 根据类别名称
+                if hasattr(behavior_model_hrw, 'names') and behavior_model_hrw.names:
+                    class_names = behavior_model_hrw.names
+                else:
+                    class_names = ['RaiseHand', 'Reading', 'Writing']  # 举手、阅读、写字
+                
+                class_name = class_names[cls] if cls < len(class_names) else f'行为{cls}'
+                
+                behaviors.append({
+                    'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                    'confidence': confidence,
+                    'class': class_name
+                })
+    
+    # 更新统计
+    if stream_id and len(behaviors) > 0:
+        if stream_id not in behavior_statistics:
+            behavior_statistics[stream_id] = {}
+        
+        for behavior in behaviors:
+            class_name = behavior['class']
+            behavior_statistics[stream_id][class_name] = behavior_statistics[stream_id].get(class_name, 0) + 1
     
     if len(behaviors) > 0:
-        print(f"[行为检测] 检测到 {len(behaviors)} 个行为 | 耗时: {detection_time*1000:.2f}ms")
+        print(f"[行为检测] 检测到 {len(behaviors)} 个行为")
         for i, behavior in enumerate(behaviors):
-            print(f"  - 行为{i+1}: {behavior['class']} | 置信度: {behavior['confidence']:.4f} | "
-                  f"位置: [{behavior['bbox'][0]}, {behavior['bbox'][1]}, {behavior['bbox'][2]}, {behavior['bbox'][3]}]")
+            print(f"  - 行为{i+1}: {behavior['class']} | 置信度: {behavior['confidence']:.4f}")
     
     return behaviors
 
@@ -596,10 +645,10 @@ def process_frame_face_detection(frame):
     
     return annotated_frame, results_data
 
-def process_frame_behavior_detection(frame):
+def process_frame_behavior_detection(frame, stream_id=None):
     """处理帧进行行为检测"""
     total_start_time = time.time()
-    behaviors = detect_behaviors(frame)
+    behaviors = detect_behaviors(frame, stream_id=stream_id)
     total_time = time.time() - total_start_time
     
     # 如果没有检测到行为，也打印信息
@@ -675,6 +724,10 @@ def generate_frames_behavior(source_type, source_path, stream_id):
     """生成行为检测视频流"""
     cap = None
     
+    # 初始化统计
+    if stream_id:
+        behavior_statistics[stream_id] = {}
+    
     try:
         if source_type == 'rtsp':
             cap = cv2.VideoCapture(source_path)
@@ -695,8 +748,8 @@ def generate_frames_behavior(source_type, source_path, stream_id):
             if not ret:
                 break
             
-            # 处理帧
-            processed_frame, _ = process_frame_behavior_detection(frame)
+            # 处理帧（传递stream_id用于统计）
+            processed_frame, _ = process_frame_behavior_detection(frame, stream_id=stream_id)
             
             # 编码为JPEG
             ret, buffer = cv2.imencode('.jpg', processed_frame)
@@ -715,6 +768,9 @@ def generate_frames_behavior(source_type, source_path, stream_id):
     finally:
         if cap:
             cap.release()
+        # 清理统计（可选，如果需要保留统计可以注释掉）
+        # if stream_id and stream_id in behavior_statistics:
+        #     del behavior_statistics[stream_id]
 
 # 路由
 @app.route('/')
@@ -1284,6 +1340,54 @@ def list_uploaded_videos():
     
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/behavior/statistics', methods=['GET'])
+def get_behavior_statistics():
+    """获取行为统计"""
+    stream_id = request.args.get('stream_id', '')
+    
+    if not stream_id:
+        return jsonify({'success': False, 'message': '缺少stream_id参数'}), 400
+    
+    if stream_id in behavior_statistics:
+        stats = behavior_statistics[stream_id]
+        total = sum(stats.values())
+        return jsonify({
+            'success': True,
+            'statistics': stats,
+            'total': total,
+            'stream_id': stream_id
+        })
+    else:
+        return jsonify({
+            'success': True,
+            'statistics': {},
+            'total': 0,
+            'stream_id': stream_id
+        })
+
+@app.route('/api/behavior/statistics/reset', methods=['POST'])
+def reset_behavior_statistics():
+    """重置行为统计"""
+    data = request.json if request.is_json else {}
+    stream_id = data.get('stream_id', '') or request.form.get('stream_id', '')
+    
+    if not stream_id:
+        return jsonify({'success': False, 'message': '缺少stream_id参数'}), 400
+    
+    if stream_id in behavior_statistics:
+        behavior_statistics[stream_id] = {}
+        return jsonify({
+            'success': True,
+            'message': '统计已重置',
+            'stream_id': stream_id
+        })
+    else:
+        return jsonify({
+            'success': True,
+            'message': '统计不存在或已为空',
+            'stream_id': stream_id
+        })
 
 if __name__ == '__main__':
     print("正在初始化模型...")

@@ -183,6 +183,63 @@ main {
     background: #3182ce;
 }
 
+.btn-warning {
+    background: #ed8936;
+    color: white;
+}
+
+.btn-warning:hover {
+    background: #dd6b20;
+}
+
+.statistics-container {
+    margin-top: 15px;
+    padding: 15px;
+    background: #f7fafc;
+    border-radius: 5px;
+    border: 1px solid #e2e8f0;
+}
+
+.statistics-table {
+    width: 100%;
+}
+
+.statistics-header {
+    padding: 10px;
+    background: #e6fffa;
+    border-radius: 5px;
+    margin-bottom: 10px;
+    text-align: center;
+    font-size: 16px;
+    color: #234e52;
+}
+
+.statistics-table table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.statistics-table th,
+.statistics-table td {
+    padding: 10px;
+    text-align: left;
+    border: 1px solid #e2e8f0;
+}
+
+.statistics-table th {
+    background: #f7fafc;
+    font-weight: 600;
+    color: #2d3748;
+}
+
+.statistics-table tr:nth-child(even) {
+    background: #f7fafc;
+}
+
+.statistics-table tr:hover {
+    background: #edf2f7;
+}
+
 .result-box {
     margin-top: 15px;
     padding: 15px;
