@@ -100,6 +100,8 @@ face_encodings_db = {}  # 存储人脸编码 {name: encoding}
 rtsp_streams = {}  # 存储RTSP流 {stream_id: cap}
 video_streams = {}  # 存储视频流 {stream_id: cap}
 behavior_statistics = {}  # 存储行为统计 {stream_id: {class_name: count}}
+face_statistics = {}  # 存储人脸统计 {stream_id: {name: count}}
+face_detection_list = {}  # 存储检测到的人脸列表 {stream_id: [face_info, ...]}
 
 # 初始化模型
 def init_models():
@@ -470,7 +472,7 @@ def recognize_face_from_encoding(face_encoding):
         
         # ArcFace通常使用0.6-0.7的阈值，这里使用0.6
         # 如果相似度大于0.6，认为是同一个人
-        if best_similarity > 0.4:
+        if best_similarity > 0.25:
             return best_match, best_similarity
         
         return None, best_similarity  # 返回最高相似度，即使未达到阈值
@@ -552,7 +554,7 @@ def detect_behaviors(image, stream_id=None):
     return behaviors
 
 
-def process_frame_face_detection(frame):
+def process_frame_face_detection(frame, stream_id=None):
     """处理帧进行人脸检测和识别（InsightFace检测 -> 直接提取特征 -> 识别）"""
     total_start_time = time.time()
     
@@ -642,6 +644,29 @@ def process_frame_face_detection(frame):
             'similarity': similarity
         })
     
+    # 更新统计和列表
+    if stream_id:
+        # 初始化统计字典
+        if stream_id not in face_statistics:
+            face_statistics[stream_id] = {}
+        if stream_id not in face_detection_list:
+            face_detection_list[stream_id] = []
+        
+        # 为每个检测到的人脸添加时间戳并添加到列表
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        for result in recognition_results:
+            face_info = {
+                'timestamp': current_time,
+                'name': result['name'] if result['name'] else '未知',
+                'similarity': result['similarity'],
+                'confidence': result['confidence'],
+                'bbox': result['bbox']
+            }
+            face_detection_list[stream_id].append(face_info)
+            
+            # 更新统计计数
+            name_key = result['name'] if result['name'] else '未知'
+            face_statistics[stream_id][name_key] = face_statistics[stream_id].get(name_key, 0) + 1
     
     return annotated_frame, results_data
 
@@ -679,6 +704,11 @@ def generate_frames_face(source_type, source_path, stream_id):
     """生成人脸检测视频流"""
     cap = None
     
+    # 初始化统计
+    if stream_id:
+        face_statistics[stream_id] = {}
+        face_detection_list[stream_id] = []
+    
     try:
         if source_type == 'rtsp':
             cap = cv2.VideoCapture(source_path)
@@ -699,8 +729,8 @@ def generate_frames_face(source_type, source_path, stream_id):
             if not ret:
                 break
             
-            # 处理帧
-            processed_frame, _ = process_frame_face_detection(frame)
+            # 处理帧（传递stream_id用于统计）
+            processed_frame, _ = process_frame_face_detection(frame, stream_id=stream_id)
             
             # 编码为JPEG
             ret, buffer = cv2.imencode('.jpg', processed_frame)
@@ -1377,6 +1407,87 @@ def reset_behavior_statistics():
     
     if stream_id in behavior_statistics:
         behavior_statistics[stream_id] = {}
+        return jsonify({
+            'success': True,
+            'message': '统计已重置',
+            'stream_id': stream_id
+        })
+    else:
+        return jsonify({
+            'success': True,
+            'message': '统计不存在或已为空',
+            'stream_id': stream_id
+        })
+
+@app.route('/api/face/statistics', methods=['GET'])
+def get_face_statistics():
+    """获取人脸检测统计"""
+    stream_id = request.args.get('stream_id', '')
+    
+    if not stream_id:
+        return jsonify({'success': False, 'message': '缺少stream_id参数'}), 400
+    
+    if stream_id in face_statistics:
+        stats = face_statistics[stream_id]
+        total = sum(stats.values())
+        return jsonify({
+            'success': True,
+            'statistics': stats,
+            'total': total,
+            'stream_id': stream_id
+        })
+    else:
+        return jsonify({
+            'success': True,
+            'statistics': {},
+            'total': 0,
+            'stream_id': stream_id
+        })
+
+@app.route('/api/face/list', methods=['GET'])
+def get_face_detection_list():
+    """获取检测到的人脸列表"""
+    stream_id = request.args.get('stream_id', '')
+    limit = request.args.get('limit', type=int)  # 可选：限制返回数量
+    
+    if not stream_id:
+        return jsonify({'success': False, 'message': '缺少stream_id参数'}), 400
+    
+    if stream_id in face_detection_list:
+        face_list = face_detection_list[stream_id]
+        
+        # 如果指定了limit，只返回最新的N条记录
+        if limit and limit > 0:
+            face_list = face_list[-limit:]
+        
+        return jsonify({
+            'success': True,
+            'faces': face_list,
+            'count': len(face_list),
+            'total': len(face_detection_list[stream_id]),
+            'stream_id': stream_id
+        })
+    else:
+        return jsonify({
+            'success': True,
+            'faces': [],
+            'count': 0,
+            'total': 0,
+            'stream_id': stream_id
+        })
+
+@app.route('/api/face/statistics/reset', methods=['POST'])
+def reset_face_statistics():
+    """重置人脸检测统计"""
+    data = request.json if request.is_json else {}
+    stream_id = data.get('stream_id', '') or request.form.get('stream_id', '')
+    
+    if not stream_id:
+        return jsonify({'success': False, 'message': '缺少stream_id参数'}), 400
+    
+    if stream_id in face_statistics:
+        face_statistics[stream_id] = {}
+        face_detection_list[stream_id] = []
         return jsonify({
             'success': True,
             'message': '统计已重置',

@@ -119,6 +119,23 @@
                             </div>
                         </div>
                     </div>
+
+                    <div class="section">
+                        <h3>人员统计</h3>
+                        <div class="form-group">
+                            <button class="btn btn-info" onclick="refreshFaceDetectionList()">刷新统计</button>
+                            <button class="btn btn-warning" onclick="resetFaceDetectionList()">清空统计</button>
+                        </div>
+                        <div id="face-statistics-list" class="face-statistics-list" style="
+                            margin-bottom: 20px;
+                            border: 1px solid #ddd;
+                            padding: 15px;
+                            border-radius: 4px;
+                            background: #f9f9f9;
+                        ">
+                            <p style="color: #999; text-align: center; margin: 20px 0;">开始检测后，人员统计将显示在这里</p>
+                        </div>
+                    </div>
                 </div>
             </div>
 

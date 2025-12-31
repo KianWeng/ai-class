@@ -540,6 +540,11 @@ async function startFaceDetection() {
             videoStream.style.display = 'block';
             videoStream.src = result.url + '&t=' + new Date().getTime();
             currentFaceStream = result.stream_id;
+            
+            // 开始自动刷新人脸列表
+            startFaceDetectionListAutoRefresh();
+            // 立即刷新一次
+            setTimeout(() => refreshFaceDetectionList(), 2000);
         } else {
             alert(`启动失败: ${result.message}`);
         }
@@ -556,6 +561,10 @@ function stopFaceDetection() {
     videoStream.src = '';
     videoStream.style.display = 'none';
     placeholder.style.display = 'flex';
+    
+    // 停止自动刷新列表
+    stopFaceDetectionListAutoRefresh();
+    
     currentFaceStream = null;
 }
 
@@ -745,6 +754,142 @@ function stopBehaviorStatisticsAutoRefresh() {
     if (behaviorStatisticsInterval) {
         clearInterval(behaviorStatisticsInterval);
         behaviorStatisticsInterval = null;
+    }
+}
+
+// 刷新人脸检测列表
+async function refreshFaceDetectionList() {
+    if (!currentFaceStream) {
+        alert('请先开始检测');
+        return;
+    }
+
+    try {
+        // 获取统计信息
+        const statsResponse = await fetch(`/api/face/statistics?stream_id=${currentFaceStream}`);
+        const statsResult = await statsResponse.json();
+
+        if (statsResult.success) {
+            // 显示人员统计
+            displayFaceStatistics(statsResult.statistics, statsResult.total);
+        } else {
+            alert(`获取统计失败: ${statsResult.message}`);
+        }
+    } catch (error) {
+        alert(`获取统计失败: ${error.message}`);
+    }
+}
+
+// 显示人员统计列表
+function displayFaceStatistics(statistics, total) {
+    const container = document.getElementById('face-statistics-list');
+    
+    if (total === 0 || Object.keys(statistics).length === 0) {
+        container.innerHTML = '<p style="color: #999; text-align: center; margin: 20px 0;">暂无检测数据</p>';
+        return;
+    }
+
+    // 按检测次数排序
+    const sortedStats = Object.entries(statistics).sort((a, b) => b[1] - a[1]);
+
+    let html = '<div class="face-statistics-content">';
+    html += `<div style="margin-bottom: 15px; padding: 10px; background: #e3f2fd; border-radius: 4px; text-align: center;">
+        <strong style="font-size: 16px;">总计检测: ${total} 次</strong> | 识别到: ${sortedStats.length} 人
+    </div>`;
+    
+    html += '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px;">';
+    
+    sortedStats.forEach(([name, count]) => {
+        const percentage = ((count / total) * 100).toFixed(1);
+        const isRecognized = name !== '未知';
+        
+        html += `
+            <div style="
+                padding: 12px;
+                border: 1px solid #ddd;
+                border-radius: 6px;
+                background: ${isRecognized ? '#e8f5e9' : '#fff3e0'};
+                border-left: 4px solid ${isRecognized ? '#4caf50' : '#ff9800'};
+                transition: transform 0.2s;
+            " onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <span style="font-size: 18px; margin-right: 8px;">${isRecognized ? '✓' : '○'}</span>
+                    <strong style="color: ${isRecognized ? '#2e7d32' : '#e65100'}; font-size: 16px;">${name}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 20px; font-weight: bold; color: #2196F3;">${count}</span>
+                    <span style="font-size: 12px; color: #666;">次</span>
+                </div>
+                <div style="margin-top: 6px;">
+                    <div style="background: #e0e0e0; border-radius: 4px; height: 6px; overflow: hidden;">
+                        <div style="background: ${isRecognized ? '#4caf50' : '#ff9800'}; height: 100%; width: ${percentage}%; transition: width 0.3s;"></div>
+                    </div>
+                    <div style="font-size: 11px; color: #666; margin-top: 4px; text-align: right;">${percentage}%</div>
+                </div>
+            </div>
+        `;
+    });
+    
+    html += '</div>';
+    html += '</div>';
+    
+    container.innerHTML = html;
+}
+
+
+// 重置人脸检测列表
+async function resetFaceDetectionList() {
+    if (!currentFaceStream) {
+        alert('请先开始检测');
+        return;
+    }
+
+    if (!confirm('确定要清空检测列表吗？')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/face/statistics/reset', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                stream_id: currentFaceStream
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert('列表已清空');
+            refreshFaceDetectionList();
+        } else {
+            alert(`清空失败: ${result.message}`);
+        }
+    } catch (error) {
+        alert(`清空失败: ${error.message}`);
+    }
+}
+
+// 自动刷新人脸检测列表（每3秒）
+let faceDetectionListInterval = null;
+
+function startFaceDetectionListAutoRefresh() {
+    if (faceDetectionListInterval) {
+        clearInterval(faceDetectionListInterval);
+    }
+    faceDetectionListInterval = setInterval(() => {
+        if (currentFaceStream) {
+            refreshFaceDetectionList();
+        }
+    }, 3000);
+}
+
+function stopFaceDetectionListAutoRefresh() {
+    if (faceDetectionListInterval) {
+        clearInterval(faceDetectionListInterval);
+        faceDetectionListInterval = null;
     }
 }
 
