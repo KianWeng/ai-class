@@ -58,7 +58,8 @@ UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv', 'jpg', 'jpeg', 'png'}
 FACES_FOLDER = 'faces_database'
 MODEL_FACE_PATH = 'weights/face_detect/best.pt'  # 人脸检测模型
-MODEL_BEHAVIOR_PATH = 'weights/scb/best.pt'  # 行为检测模型（如果存在）
+MODEL_BEHAVIOR_PATH = 'weights/scb/best.pt'  # 行为检测模型（如果存在）- 低头、转头
+MODEL_BEHAVIOR_HRW_PATH = 'weights/scb/hrw_best.pt'  # 行为检测模型（如果存在）- 举手、阅读、写字
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB
@@ -69,14 +70,18 @@ os.makedirs(FACES_FOLDER, exist_ok=True)
 
 # 全局变量
 face_model = None
-behavior_model = None
+behavior_model = None  # 低头、转头模型
+behavior_model_hrw = None  # 举手、阅读、写字模型
 face_encodings_db = {}  # 存储人脸编码 {name: encoding}
 rtsp_streams = {}  # 存储RTSP流 {stream_id: cap}
 video_streams = {}  # 存储视频流 {stream_id: cap}
+behavior_statistics = {}  # 存储行为统计 {stream_id: {class_name: count}}
+face_statistics = {}  # 存储人脸统计 {stream_id: {name: count}}
+face_detection_list = {}  # 存储检测到的人脸列表 {stream_id: [face_info, ...]}
 
 # 初始化模型
 def init_models():
-    global face_model, behavior_model
+    global face_model, behavior_model, behavior_model_hrw
     
     # 加载人脸检测模型
     if os.path.exists(MODEL_FACE_PATH):
@@ -86,13 +91,21 @@ def init_models():
         print(f"警告: 人脸检测模型不存在: {MODEL_FACE_PATH}")
         face_model = YOLO('yolo11n.pt')  # 使用默认模型
     
-    # 加载行为检测模型（如果需要）
+    # 加载行为检测模型1：低头、转头
     if os.path.exists(MODEL_BEHAVIOR_PATH):
-        print(f"加载行为检测模型: {MODEL_BEHAVIOR_PATH}")
+        print(f"加载行为检测模型1: {MODEL_BEHAVIOR_PATH} (低头、转头)")
         behavior_model = YOLO(MODEL_BEHAVIOR_PATH)
     else:
-        print(f"警告: 行为检测模型不存在: {MODEL_BEHAVIOR_PATH}，将使用默认模型")
+        print(f"警告: 行为检测模型1不存在: {MODEL_BEHAVIOR_PATH}")
         behavior_model = None
+    
+    # 加载行为检测模型2：举手、阅读、写字
+    if os.path.exists(MODEL_BEHAVIOR_HRW_PATH):
+        print(f"加载行为检测模型2: {MODEL_BEHAVIOR_HRW_PATH} (举手、阅读、写字)")
+        behavior_model_hrw = YOLO(MODEL_BEHAVIOR_HRW_PATH)
+    else:
+        print(f"警告: 行为检测模型2不存在: {MODEL_BEHAVIOR_HRW_PATH}")
+        behavior_model_hrw = None
     
     # 加载已注册的人脸
     load_face_database()
@@ -344,35 +357,73 @@ def recognize_face_from_encoding(face_encoding):
         traceback.print_exc()
         return None, 0.0
 
-def detect_behaviors(image):
-    """检测学生行为"""
-    if behavior_model is None:
-        return []
-    
-    results = behavior_model.predict(image, conf=0.25, verbose=False)
+def detect_behaviors(image, stream_id=None):
+    """检测学生行为（支持两个模型）"""
     behaviors = []
     
-    if len(results) > 0 and results[0].boxes is not None:
-        boxes = results[0].boxes
-        for box in boxes:
-            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-            confidence = float(box.conf[0].cpu().numpy())
-            cls = int(box.cls[0].cpu().numpy())
-            
-            # 根据类别名称
-            class_names = ['BowHead', 'TurnHead'] if behavior_model.names else ['行为1', '行为2']
-            class_name = class_names[cls] if cls < len(class_names) else f'行为{cls}'
-            
-            behaviors.append({
-                'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                'confidence': confidence,
-                'class': class_name
-            })
+    # 模型1：低头、转头
+    if behavior_model is not None:
+        results = behavior_model.predict(image, conf=0.25, verbose=False)
+        
+        if len(results) > 0 and results[0].boxes is not None:
+            boxes = results[0].boxes
+            for box in boxes:
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                confidence = float(box.conf[0].cpu().numpy())
+                cls = int(box.cls[0].cpu().numpy())
+                
+                # 根据类别名称
+                if hasattr(behavior_model, 'names') and behavior_model.names:
+                    class_names = behavior_model.names
+                else:
+                    class_names = ['BowHead', 'TurnHead']
+                
+                class_name = class_names[cls] if cls < len(class_names) else f'行为{cls}'
+                
+                behaviors.append({
+                    'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                    'confidence': confidence,
+                    'class': class_name
+                })
+    
+    # 模型2：举手、阅读、写字
+    if behavior_model_hrw is not None:
+        results = behavior_model_hrw.predict(image, conf=0.25, verbose=False)
+        
+        if len(results) > 0 and results[0].boxes is not None:
+            boxes = results[0].boxes
+            for box in boxes:
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                confidence = float(box.conf[0].cpu().numpy())
+                cls = int(box.cls[0].cpu().numpy())
+                
+                # 根据类别名称
+                if hasattr(behavior_model_hrw, 'names') and behavior_model_hrw.names:
+                    class_names = behavior_model_hrw.names
+                else:
+                    class_names = ['RaiseHand', 'Reading', 'Writing']  # 举手、阅读、写字
+                
+                class_name = class_names[cls] if cls < len(class_names) else f'行为{cls}'
+                
+                behaviors.append({
+                    'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                    'confidence': confidence,
+                    'class': class_name
+                })
+    
+    # 更新统计
+    if stream_id and len(behaviors) > 0:
+        if stream_id not in behavior_statistics:
+            behavior_statistics[stream_id] = {}
+        
+        for behavior in behaviors:
+            class_name = behavior['class']
+            behavior_statistics[stream_id][class_name] = behavior_statistics[stream_id].get(class_name, 0) + 1
     
     return behaviors
 
 
-def process_frame_face_detection(frame):
+def process_frame_face_detection(frame, stream_id=None):
     """处理帧进行人脸检测和识别（YOLO检测 -> 裁剪对齐 -> 批量FaceNet识别）"""
     # 步骤1: 使用YOLO检测人脸
     detection_start_time = time.time()
@@ -473,11 +524,35 @@ def process_frame_face_detection(frame):
         print(f"[识别摘要] 识别到的人员: {', '.join(recognized_names)}")
     print("-" * 60)  # 分隔线
     
+    # 更新统计和列表
+    if stream_id:
+        # 初始化统计字典
+        if stream_id not in face_statistics:
+            face_statistics[stream_id] = {}
+        if stream_id not in face_detection_list:
+            face_detection_list[stream_id] = []
+        
+        # 为每个检测到的人脸添加时间戳并添加到列表
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        for result in recognition_results:
+            face_info = {
+                'timestamp': current_time,
+                'name': result['name'] if result['name'] else '未知',
+                'similarity': result['similarity'],
+                'confidence': result['confidence'],
+                'bbox': result['bbox']
+            }
+            face_detection_list[stream_id].append(face_info)
+            
+            # 更新统计计数
+            name_key = result['name'] if result['name'] else '未知'
+            face_statistics[stream_id][name_key] = face_statistics[stream_id].get(name_key, 0) + 1
+    
     return annotated_frame, results_data
 
-def process_frame_behavior_detection(frame):
+def process_frame_behavior_detection(frame, stream_id=None):
     """处理帧进行行为检测"""
-    behaviors = detect_behaviors(frame)
+    behaviors = detect_behaviors(frame, stream_id=stream_id)
     
     # 绘制结果
     annotated_frame = frame.copy()
@@ -500,6 +575,11 @@ def generate_frames_face(source_type, source_path, stream_id):
     """生成人脸检测视频流"""
     cap = None
     
+    # 初始化统计
+    if stream_id:
+        face_statistics[stream_id] = {}
+        face_detection_list[stream_id] = []
+    
     try:
         if source_type == 'rtsp':
             cap = cv2.VideoCapture(source_path)
@@ -520,8 +600,8 @@ def generate_frames_face(source_type, source_path, stream_id):
             if not ret:
                 break
             
-            # 处理帧
-            processed_frame, _ = process_frame_face_detection(frame)
+            # 处理帧（传递stream_id用于统计）
+            processed_frame, _ = process_frame_face_detection(frame, stream_id=stream_id)
             
             # 编码为JPEG
             ret, buffer = cv2.imencode('.jpg', processed_frame)
@@ -545,6 +625,10 @@ def generate_frames_behavior(source_type, source_path, stream_id):
     """生成行为检测视频流"""
     cap = None
     
+    # 初始化统计
+    if stream_id:
+        behavior_statistics[stream_id] = {}
+    
     try:
         if source_type == 'rtsp':
             cap = cv2.VideoCapture(source_path)
@@ -565,8 +649,8 @@ def generate_frames_behavior(source_type, source_path, stream_id):
             if not ret:
                 break
             
-            # 处理帧
-            processed_frame, _ = process_frame_behavior_detection(frame)
+            # 处理帧（传递stream_id用于统计）
+            processed_frame, _ = process_frame_behavior_detection(frame, stream_id=stream_id)
             
             # 编码为JPEG
             ret, buffer = cv2.imencode('.jpg', processed_frame)
@@ -911,10 +995,141 @@ def list_uploaded_videos():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+# 人脸检测统计API
+@app.route('/api/face/statistics', methods=['GET'])
+def get_face_statistics():
+    """获取人脸检测统计"""
+    stream_id = request.args.get('stream_id', '')
+    
+    if not stream_id:
+        return jsonify({'success': False, 'message': '缺少stream_id参数'}), 400
+    
+    if stream_id in face_statistics:
+        stats = face_statistics[stream_id]
+        total = sum(stats.values())
+        return jsonify({
+            'success': True,
+            'statistics': stats,
+            'total': total,
+            'stream_id': stream_id
+        })
+    else:
+        return jsonify({
+            'success': True,
+            'statistics': {},
+            'total': 0,
+            'stream_id': stream_id
+        })
+
+@app.route('/api/face/list', methods=['GET'])
+def get_face_detection_list():
+    """获取检测到的人脸列表"""
+    stream_id = request.args.get('stream_id', '')
+    limit = request.args.get('limit', type=int)  # 可选：限制返回数量
+    
+    if not stream_id:
+        return jsonify({'success': False, 'message': '缺少stream_id参数'}), 400
+    
+    if stream_id in face_detection_list:
+        face_list = face_detection_list[stream_id]
+        
+        # 如果指定了limit，只返回最新的N条记录
+        if limit and limit > 0:
+            face_list = face_list[-limit:]
+        
+        return jsonify({
+            'success': True,
+            'faces': face_list,
+            'count': len(face_list),
+            'total': len(face_detection_list[stream_id]),
+            'stream_id': stream_id
+        })
+    else:
+        return jsonify({
+            'success': True,
+            'faces': [],
+            'count': 0,
+            'total': 0,
+            'stream_id': stream_id
+        })
+
+@app.route('/api/face/statistics/reset', methods=['POST'])
+def reset_face_statistics():
+    """重置人脸检测统计"""
+    data = request.json if request.is_json else {}
+    stream_id = data.get('stream_id', '') or request.form.get('stream_id', '')
+    
+    if not stream_id:
+        return jsonify({'success': False, 'message': '缺少stream_id参数'}), 400
+    
+    if stream_id in face_statistics:
+        face_statistics[stream_id] = {}
+        face_detection_list[stream_id] = []
+        return jsonify({
+            'success': True,
+            'message': '统计已重置',
+            'stream_id': stream_id
+        })
+    else:
+        return jsonify({
+            'success': True,
+            'message': '统计不存在或已为空',
+            'stream_id': stream_id
+        })
+
+# 行为检测统计API
+@app.route('/api/behavior/statistics', methods=['GET'])
+def get_behavior_statistics():
+    """获取行为统计"""
+    stream_id = request.args.get('stream_id', '')
+    
+    if not stream_id:
+        return jsonify({'success': False, 'message': '缺少stream_id参数'}), 400
+    
+    if stream_id in behavior_statistics:
+        stats = behavior_statistics[stream_id]
+        total = sum(stats.values())
+        return jsonify({
+            'success': True,
+            'statistics': stats,
+            'total': total,
+            'stream_id': stream_id
+        })
+    else:
+        return jsonify({
+            'success': True,
+            'statistics': {},
+            'total': 0,
+            'stream_id': stream_id
+        })
+
+@app.route('/api/behavior/statistics/reset', methods=['POST'])
+def reset_behavior_statistics():
+    """重置行为统计"""
+    data = request.json if request.is_json else {}
+    stream_id = data.get('stream_id', '') or request.form.get('stream_id', '')
+    
+    if not stream_id:
+        return jsonify({'success': False, 'message': '缺少stream_id参数'}), 400
+    
+    if stream_id in behavior_statistics:
+        behavior_statistics[stream_id] = {}
+        return jsonify({
+            'success': True,
+            'message': '统计已重置',
+            'stream_id': stream_id
+        })
+    else:
+        return jsonify({
+            'success': True,
+            'message': '统计不存在或已为空',
+            'stream_id': stream_id
+        })
+
 if __name__ == '__main__':
     print("正在初始化模型...")
     init_models()
     print("模型初始化完成!")
     print("启动Flask服务器...")
-    app.run(host='0.0.0.0', port=9100, debug=True, threaded=True)
+    app.run(host='0.0.0.0', port=8188, debug=True, threaded=True)
 
