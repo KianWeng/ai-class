@@ -57,8 +57,8 @@ CORS(app)
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv', 'jpg', 'jpeg', 'png'}
 FACES_FOLDER = 'faces_database'
-MODEL_FACE_PATH = 'weights/face_detect/best.pt'  # 人脸检测模型
-MODEL_BEHAVIOR_PATH = 'weights/scb/best.pt'  # 行为检测模型（如果存在）- 低头、转头
+MODEL_FACE_PATH = 'weights/face_detect/yolo11n-face.pt'  # 人脸检测模型
+MODEL_BEHAVIOR_PATH = 'weights/scb/bth_best.pt'  # 行为检测模型（如果存在）- 低头、转头
 MODEL_BEHAVIOR_HRW_PATH = 'weights/scb/hrw_best.pt'  # 行为检测模型（如果存在）- 举手、阅读、写字
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
