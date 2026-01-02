@@ -472,10 +472,13 @@ def recognize_face_from_encoding(face_encoding):
         
         # ArcFace通常使用0.6-0.7的阈值，这里使用0.6
         # 如果相似度大于0.6，认为是同一个人
-        if best_similarity > 0.25:
-            return best_match, best_similarity
+        # 将 numpy 类型转换为 Python 原生类型
+        best_similarity_float = float(best_similarity)
         
-        return None, best_similarity  # 返回最高相似度，即使未达到阈值
+        if best_similarity_float > 0.25:
+            return best_match, best_similarity_float
+        
+        return None, best_similarity_float  # 返回最高相似度，即使未达到阈值
     except Exception:
         return None, 0.0
 
@@ -1079,7 +1082,10 @@ def checkin_face():
             total_time = time.time() - total_start_time
             
             # 如果相似度大于0.6，认为是同一个人
-            if best_similarity > 0.6:
+            # 将 numpy 类型转换为 Python 原生类型，确保 JSON 序列化正常
+            best_similarity_float = float(best_similarity)
+            
+            if best_similarity_float > 0.6:
                 print(f"[人脸打卡] 打卡成功: {best_match} | "
                       f"检测到人脸: {len(face_objects)}个 | 检测置信度: {confidence:.4f} | "
                       f"相似度: {best_similarity:.4f} | "
@@ -1093,7 +1099,7 @@ def checkin_face():
                     'success': True,
                     'message': f'打卡成功: {best_match}',
                     'name': best_match,
-                    'similarity': best_similarity,
+                    'similarity': best_similarity_float,
                     'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 })
             else:
@@ -1110,7 +1116,7 @@ def checkin_face():
                     'success': False,
                     'message': '未识别到已注册的人脸',
                     'name': None,
-                    'similarity': best_similarity
+                    'similarity': best_similarity_float
                 })
         
         return jsonify({'success': False, 'message': '不支持的文件格式'}), 400
